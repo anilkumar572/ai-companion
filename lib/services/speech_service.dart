@@ -62,11 +62,11 @@ class SpeechService {
 
     final resolvedLocale = await _resolveLocaleId(localeId);
     final attempts = <_ListenAttempt>[
-      _ListenAttempt(localeId: null, onDevice: false),
-      if (resolvedLocale != null)
-        _ListenAttempt(localeId: resolvedLocale, onDevice: false),
       if (resolvedLocale != null)
         _ListenAttempt(localeId: resolvedLocale, onDevice: true),
+      if (resolvedLocale != null)
+        _ListenAttempt(localeId: resolvedLocale, onDevice: false),
+      _ListenAttempt(localeId: null, onDevice: false),
     ];
 
     for (final attempt in attempts) {

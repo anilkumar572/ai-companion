@@ -91,7 +91,9 @@ class NovaProvider extends ChangeNotifier {
   bool _usingRecorder = false;
   bool _workerRestSttAvailable = false;
   bool _startingListen = false;
+  bool _stoppingListen = false;
   DateTime? _listenStartedAt;
+  DateTime? _lastOrbTapAt;
 
   bool get isMicActive => _recorder.isRecording || _speech.isListening;
 
@@ -157,8 +159,16 @@ class NovaProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool _isRapidOrbTap() {
+    final now = DateTime.now();
+    final lastTap = _lastOrbTapAt;
+    _lastOrbTapAt = now;
+    return lastTap != null && now.difference(lastTap) < const Duration(milliseconds: 450);
+  }
+
   Future<void> startListening() async {
-    if (!isBootstrapped || _startingListen) return;
+    if (!isBootstrapped || _startingListen || _stoppingListen) return;
+    if (_isRapidOrbTap()) return;
     if (state == NovaAgentState.listening ||
         state == NovaAgentState.speaking ||
         state == NovaAgentState.thinking) {
@@ -192,31 +202,37 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> stopListening() async {
+    if (_stoppingListen) return;
     if (state != NovaAgentState.listening) {
       await _stopCapture();
       audioLevel = 0;
       return;
     }
 
+    _stoppingListen = true;
     _commandCaptureActive = false;
     _listenStartedAt = null;
     state = NovaAgentState.thinking;
     statusMessage = 'Understanding what you said…';
     notifyListeners();
 
-    final transcript = await _finishCapture();
-    audioLevel = 0;
+    try {
+      final transcript = await _finishCapture();
+      audioLevel = 0;
 
-    if (transcript.isNotEmpty) {
-      await _beginProcessing(transcript);
-      return;
+      if (transcript.isNotEmpty) {
+        await _beginProcessing(transcript);
+        return;
+      }
+
+      _setRecoverableError(
+        _usingRecorder && !_workerRestSttAvailable
+            ? 'Cloud speech is unavailable. Teju will use your phone microphone next time — tap the orb and try again.'
+            : 'I did not catch that. Tap the orb, speak clearly, then tap again.',
+      );
+    } finally {
+      _stoppingListen = false;
     }
-
-    _setRecoverableError(
-      _usingRecorder && !_workerRestSttAvailable
-          ? 'Cloud speech is unavailable. Teju will use your phone microphone next time — tap the orb and try again.'
-          : 'I did not catch that. Tap the orb, speak clearly, then tap again.',
-    );
   }
 
   Future<void> stopSpeaking() async {
@@ -275,31 +291,31 @@ class NovaProvider extends ChangeNotifier {
     _usingRecorder = false;
 
     Object? lastError;
-    for (var attempt = 0; attempt < 3; attempt++) {
+    for (var attempt = 0; attempt < 2; attempt++) {
       if (!_commandCaptureActive || state != NovaAgentState.listening) return;
       if (attempt > 0) {
-        await Future<void>.delayed(Duration(milliseconds: 180 * attempt));
+        await Future<void>.delayed(const Duration(milliseconds: 250));
       }
 
       try {
         await _speech.startListening(
           onResult: (transcript, isFinal) {
-            if (!_commandCaptureActive || _processingTranscript) return;
+            if (!_commandCaptureActive ||
+                _processingTranscript ||
+                _stoppingListen) {
+              return;
+            }
 
             if (transcript.trim().isNotEmpty) {
               liveTranscript = transcript;
               notifyListeners();
             }
-
-            if (!isFinal || transcript.trim().isEmpty) return;
-
-            _commandCaptureActive = false;
-            unawaited(_beginProcessing(transcript.trim()));
+            // Manual tap-to-talk: only stopListening() submits the transcript.
           },
           onSoundLevel: _updateAudioLevel,
           localeId: preferredLanguage,
-          listenFor: const Duration(seconds: 30),
-          pauseFor: const Duration(seconds: 4),
+          listenFor: const Duration(seconds: 120),
+          pauseFor: const Duration(seconds: 30),
         );
         return;
       } catch (error) {
@@ -367,11 +383,6 @@ class NovaProvider extends ChangeNotifier {
       return;
     }
 
-    if (message.contains('busy') && _isWithinListenGracePeriod()) {
-      unawaited(_retryDeviceSpeechListening());
-      return;
-    }
-
     _commandCaptureActive = false;
     unawaited(_recorder.cancel());
     _setRecoverableError(
@@ -388,30 +399,24 @@ class NovaProvider extends ChangeNotifier {
   }
 
   void _handleSpeechStatus(String status) {
+    // Tap-to-talk only — never auto-submit when the speech engine pauses or stops.
     if (_usingRecorder) return;
-    if (!_commandCaptureActive || state != NovaAgentState.listening) return;
-    if (_processingTranscript) return;
     if (status != 'done' && status != 'notListening') return;
+    if (!_commandCaptureActive || state != NovaAgentState.listening) return;
+    if (_stoppingListen || _processingTranscript) return;
     if (_isWithinListenGracePeriod()) return;
-    if (_speech.isListening) return;
 
-    final transcript = liveTranscript.trim();
-    if (transcript.isEmpty) return;
-
-    _commandCaptureActive = false;
-    unawaited(_beginProcessing(transcript));
+    // Engine timed out while waiting for the user tap — keep transcript, stay listening.
+    if (liveTranscript.trim().isNotEmpty && !_speech.isListening) {
+      statusMessage = 'Still listening — tap the orb when you are done';
+      notifyListeners();
+    }
   }
 
   bool _isWithinListenGracePeriod() {
     final startedAt = _listenStartedAt;
     if (startedAt == null) return false;
     return DateTime.now().difference(startedAt) < const Duration(seconds: 2);
-  }
-
-  Future<void> _retryDeviceSpeechListening() async {
-    if (!_commandCaptureActive || state != NovaAgentState.listening) return;
-    await _speech.shutdown(hardwareCooldown: true);
-    await _startDeviceSpeechListening();
   }
 
   Future<void> _beginProcessing(String transcript) async {
