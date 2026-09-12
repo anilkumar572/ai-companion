@@ -3,7 +3,6 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/constants.dart';
-import '../../utils/wake_word_detector.dart';
 import '../../core/theme/nova_theme.dart';
 import '../../models/nova_state.dart';
 import '../../providers/nova_provider.dart';
@@ -37,16 +36,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
-    final provider = context.read<NovaProvider>();
     if (lifecycleState == AppLifecycleState.paused ||
         lifecycleState == AppLifecycleState.inactive ||
         lifecycleState == AppLifecycleState.detached) {
-      provider.releaseMicrophone();
-      return;
-    }
-
-    if (lifecycleState == AppLifecycleState.resumed) {
-      provider.resumeWakeWordIfNeeded();
+      context.read<NovaProvider>().releaseMicrophone();
     }
   }
 
@@ -113,7 +106,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   NovaOrb(
                     state: provider.state,
                     audioLevel: provider.audioLevel,
-                    wakeWordListening: provider.wakeWordListening,
                     onTap: _handleOrbTap,
                   ),
                   const SizedBox(height: 20),
@@ -131,11 +123,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _BottomHint(
-                    state: provider.state,
-                    wakeWordEnabled: provider.wakeWordEnabled,
-                    wakeWordListening: provider.wakeWordListening,
-                  ),
+                  _BottomHint(state: provider.state),
                   const SizedBox(height: 16),
                 ],
               ),
@@ -163,26 +151,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 }
 
 class _BottomHint extends StatelessWidget {
-  const _BottomHint({
-    required this.state,
-    required this.wakeWordEnabled,
-    required this.wakeWordListening,
-  });
+  const _BottomHint({required this.state});
 
   final NovaAgentState state;
-  final bool wakeWordEnabled;
-  final bool wakeWordListening;
 
   @override
   Widget build(BuildContext context) {
     final hint = switch (state) {
-      NovaAgentState.idle => wakeWordEnabled
-          ? wakeWordListening
-              ? 'Listening for ${WakeWordDetector.wakeWordHint()} — or tap the orb'
-              : 'Say ${WakeWordDetector.wakeWordHint()} to speak — or tap the orb'
-          : 'Tap the orb to speak',
-      NovaAgentState.listening =>
-        'Speak your command now — or tap the orb when finished',
+      NovaAgentState.idle => 'Tap the orb to speak',
+      NovaAgentState.listening => 'Speak now — tap the orb when finished',
       NovaAgentState.thinking => 'Thinking through your request',
       NovaAgentState.speaking => 'Tap the orb to stop speaking',
       NovaAgentState.error => 'Tap the orb to try again',
