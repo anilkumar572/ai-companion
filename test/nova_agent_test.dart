@@ -23,6 +23,35 @@ void main() {
     expect(response.message, contains('Nova'));
   });
 
+  test('Hey Nova with a question defers to cloud', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final agent = NovaAgent(
+      reminders: ReminderService(prefs),
+      calendar: CalendarService(),
+      webSearch: WebSearchService(),
+    );
+
+    final response = await agent.respond(
+      'Hey Nova, how are you?',
+      allowCloudDeferral: true,
+    );
+
+    expect(response.deferToCloud, isTrue);
+  });
+
+  test('Pure greeting stays on device', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final agent = NovaAgent(
+      reminders: ReminderService(prefs),
+      calendar: CalendarService(),
+      webSearch: WebSearchService(),
+    );
+
+    final response = await agent.respond('Hey Nova');
+    expect(response.deferToCloud, isFalse);
+    expect(response.message, contains('Nova is online'));
+  });
+
   test('Nova changes to female voice on command', () async {
     final prefs = await SharedPreferences.getInstance();
     final agent = NovaAgent(

@@ -8,6 +8,7 @@ import '../core/constants.dart';
 import '../models/nova_state.dart';
 import '../models/voice_gender.dart';
 import '../services/audio_recording_service.dart';
+import '../services/cartesia_tts_service.dart';
 import '../services/calendar_service.dart';
 import '../services/camera_service.dart';
 import '../services/contacts_service.dart';
@@ -376,9 +377,16 @@ class NovaProvider extends ChangeNotifier {
         },
         languageOverride: preferredLanguage,
       );
-    } catch (_) {
+    } catch (error) {
       _processingTranscript = false;
-      _setRecoverableError('Voice playback failed. Tap the orb to try again.');
+      final message = switch (error) {
+        CartesiaTtsException() =>
+          'Voice synthesis failed. Check your internet connection and try again.',
+        TtsPlaybackException() =>
+          'Voice playback failed. Check your phone volume and try again.',
+        _ => 'Something went wrong while replying. Tap the orb to try again.',
+      };
+      _setRecoverableError(message);
     }
   }
 

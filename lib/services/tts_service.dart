@@ -55,10 +55,10 @@ class TtsService {
       AudioContext(
         android: AudioContextAndroid(
           isSpeakerphoneOn: true,
-          stayAwake: false,
+          stayAwake: true,
           contentType: AndroidContentType.speech,
           usageType: AndroidUsageType.media,
-          audioFocus: AndroidAudioFocus.gain,
+          audioFocus: AndroidAudioFocus.gainTransientMayDuck,
         ),
         iOS: AudioContextIOS(
           category: AVAudioSessionCategory.playback,
@@ -105,6 +105,8 @@ class TtsService {
     }
 
     await stop();
+    // Give Android time to release the microphone after recording.
+    await Future<void>.delayed(const Duration(milliseconds: 450));
     await _configurePlaybackAudio();
 
     final audio = await _cartesia.synthesize(
@@ -115,31 +117,32 @@ class TtsService {
       gender: _gender.storageKey,
     );
 
-    final source = await _buildPlaybackSource(audio);
-    final completer = Completer<void>();
-
-    final completeSub = _audioPlayer.onPlayerComplete.listen((_) {
-      if (!completer.isCompleted) completer.complete();
-    });
-    final stateSub = _audioPlayer.onPlayerStateChanged.listen((playerState) {
-      if (playerState == PlayerState.completed && !completer.isCompleted) {
-        completer.complete();
-      }
-    });
-
+    String? tempPath;
     try {
+      final source = await _buildPlaybackSource(audio);
+      if (source is DeviceFileSource) {
+        tempPath = source.path;
+      }
+
       onStart?.call();
       await _audioPlayer.play(source);
-      await completer.future.timeout(
+      await _audioPlayer.onPlayerComplete.first.timeout(
         const Duration(seconds: 120),
         onTimeout: () => throw TimeoutException('Voice playback timed out'),
       );
       onComplete?.call();
+    } on CartesiaTtsException {
+      rethrow;
+    } on TimeoutException {
+      rethrow;
+    } catch (error) {
+      throw TtsPlaybackException(
+        'Could not play the voice reply on this device.',
+        cause: error,
+      );
     } finally {
-      await completeSub.cancel();
-      await stateSub.cancel();
-      if (source is DeviceFileSource && source.path.isNotEmpty) {
-        unawaited(File(source.path).delete());
+      if (tempPath != null && tempPath.isNotEmpty) {
+        unawaited(File(tempPath).delete());
       }
     }
   }
@@ -154,7 +157,7 @@ class TtsService {
         '${directory.path}/nova_tts_${DateTime.now().millisecondsSinceEpoch}.wav';
     final file = File(path);
     await file.writeAsBytes(audio, flush: true);
-    return DeviceFileSource(path);
+    return DeviceFileSource(path, mimeType: 'audio/wav');
   }
 
   Future<void> stop() async {
@@ -180,6 +183,16 @@ class TtsService {
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
+}
+
+class TtsPlaybackException implements Exception {
+  TtsPlaybackException(this.message, {this.cause});
+
+  final String message;
+  final Object? cause;
+
+  @override
+  String toString() => message;
 }
 
 typedef VoidCallback = void Function();
