@@ -20,6 +20,7 @@ import '../services/speech_service.dart';
 import '../services/tts_service.dart';
 import '../services/web_search_service.dart';
 import '../services/worker_stt_service.dart';
+import '../utils/wake_word_detector.dart';
 
 class NovaProvider extends ChangeNotifier {
   factory NovaProvider({required SharedPreferences prefs}) {
@@ -83,12 +84,19 @@ class NovaProvider extends ChangeNotifier {
   bool _commandCaptureActive = false;
   bool _processingTranscript = false;
   bool _usingRecorder = true;
+  bool _wakeWordEnabled = true;
+  bool _wakeWordListenActive = false;
   DateTime? _listenStartedAt;
 
-  bool get isMicActive => _recorder.isRecording || _speech.isListening;
+  bool get isMicActive =>
+      _recorder.isRecording || _speech.isListening || _wakeWordListenActive;
+  bool get wakeWordEnabled => _wakeWordEnabled;
+  bool get wakeWordListening =>
+      _wakeWordEnabled && _wakeWordListenActive && state == NovaAgentState.idle;
 
   Future<void> bootstrap() async {
     voiceGender = voiceGenderFromStorage(_prefs.getString(NovaConstants.prefsVoiceGender));
+    _wakeWordEnabled = _prefs.getBool(NovaConstants.prefsWakeWordEnabled) ?? true;
 
     final micGranted = await _requestMicPermission();
     if (!micGranted) {
@@ -122,7 +130,35 @@ class NovaProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setWakeWordEnabled(bool enabled) async {
+    _wakeWordEnabled = enabled;
+    await _prefs.setBool(NovaConstants.prefsWakeWordEnabled, enabled);
+    if (!enabled) {
+      await _stopWakeWordListening();
+      if (state == NovaAgentState.idle) {
+        statusMessage = 'Tap the orb to speak';
+        notifyListeners();
+      }
+      return;
+    }
+
+    if (state == NovaAgentState.idle) {
+      statusMessage = 'Say "Nova" to speak';
+      notifyListeners();
+      unawaited(_startWakeWordListening());
+    }
+  }
+
+  Future<void> resumeWakeWordIfNeeded() async {
+    if (!_wakeWordEnabled || state != NovaAgentState.idle || _processingTranscript) {
+      return;
+    }
+    if (_wakeWordListenActive || _commandCaptureActive) return;
+    await _startWakeWordListening();
+  }
+
   Future<void> setVoiceGender(VoiceGender gender) async {
+    await _stopWakeWordListening();
     await _stopCapture();
     if (voiceGender == gender) {
       await _tts.setGender(gender, preview: true);
@@ -141,6 +177,8 @@ class NovaProvider extends ChangeNotifier {
         state == NovaAgentState.thinking) {
       return;
     }
+
+    await _stopWakeWordListening();
 
     final micGranted = await _requestMicPermission();
     if (!micGranted) {
@@ -192,11 +230,97 @@ class NovaProvider extends ChangeNotifier {
   Future<void> releaseMicrophone() async {
     _commandCaptureActive = false;
     _listenStartedAt = null;
+    await _stopWakeWordListening();
     await _stopCapture();
     audioLevel = 0;
 
     if (state == NovaAgentState.listening) {
       await _enterIdle();
+    }
+  }
+
+  Future<void> _startWakeWordListening() async {
+    if (!_wakeWordEnabled ||
+        state != NovaAgentState.idle ||
+        _processingTranscript ||
+        _commandCaptureActive ||
+        !_speech.isAvailable) {
+      return;
+    }
+
+    if (_wakeWordListenActive || _speech.isListening || _recorder.isRecording) {
+      return;
+    }
+
+    _wakeWordListenActive = true;
+    statusMessage = 'Say "Nova" to speak';
+    notifyListeners();
+
+    try {
+      await _speech.startListening(
+        onResult: _handleWakeWordResult,
+        onSoundLevel: _updateWakeWordAudioLevel,
+        localeId: preferredLanguage,
+        listenFor: const Duration(seconds: 60),
+        pauseFor: const Duration(seconds: 2),
+      );
+    } catch (_) {
+      _wakeWordListenActive = false;
+      statusMessage = 'Tap the orb to speak';
+      notifyListeners();
+    }
+  }
+
+  Future<void> _stopWakeWordListening() async {
+    if (!_wakeWordListenActive) return;
+    _wakeWordListenActive = false;
+    if (!_commandCaptureActive && !_processingTranscript) {
+      await _speech.shutdown();
+    }
+    if (state == NovaAgentState.idle) {
+      audioLevel = 0;
+    }
+  }
+
+  void _handleWakeWordResult(String transcript, bool isFinal) {
+    if (!_wakeWordListenActive || state != NovaAgentState.idle) return;
+    if (!WakeWordDetector.containsWakeWord(transcript)) return;
+
+    liveTranscript = transcript;
+    notifyListeners();
+
+    if (!WakeWordDetector.shouldProcess(transcript, isFinal)) return;
+
+    final command = WakeWordDetector.extractCommand(transcript);
+    _wakeWordListenActive = false;
+    unawaited(_speech.shutdown());
+
+    if (command.isNotEmpty) {
+      unawaited(_beginProcessing(command));
+      return;
+    }
+
+    unawaited(_promoteToCommandListening());
+  }
+
+  Future<void> _promoteToCommandListening() async {
+    await _speech.shutdown();
+    audioLevel = 0;
+    liveTranscript = '';
+    await _startCommandListening();
+  }
+
+  void _updateWakeWordAudioLevel(double level) {
+    if (!_wakeWordListenActive || state != NovaAgentState.idle) return;
+    audioLevel = level.clamp(0.0, 1.0);
+    notifyListeners();
+  }
+
+  Future<void> _restartWakeWordListeningSoon() async {
+    if (!_wakeWordEnabled || state != NovaAgentState.idle) return;
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    if (state == NovaAgentState.idle && !_commandCaptureActive) {
+      await _startWakeWordListening();
     }
   }
 
@@ -286,6 +410,16 @@ class NovaProvider extends ChangeNotifier {
   }
 
   void _handleSpeechError(String message) {
+    if (_wakeWordListenActive && state == NovaAgentState.idle) {
+      _wakeWordListenActive = false;
+      if (_isBenignSpeechError(message)) {
+        unawaited(_restartWakeWordListeningSoon());
+        return;
+      }
+      unawaited(_restartWakeWordListeningSoon());
+      return;
+    }
+
     if (_usingRecorder) return;
     if (state != NovaAgentState.listening || _processingTranscript) return;
     if (_isWithinListenGracePeriod()) return;
@@ -310,6 +444,14 @@ class NovaProvider extends ChangeNotifier {
   }
 
   void _handleSpeechStatus(String status) {
+    if (_wakeWordListenActive && state == NovaAgentState.idle) {
+      if (status == 'done' || status == 'notListening') {
+        _wakeWordListenActive = false;
+        unawaited(_restartWakeWordListeningSoon());
+      }
+      return;
+    }
+
     if (_usingRecorder) return;
     if (!_commandCaptureActive || state != NovaAgentState.listening) return;
     if (_processingTranscript) return;
@@ -336,6 +478,7 @@ class NovaProvider extends ChangeNotifier {
     _commandCaptureActive = false;
     _listenStartedAt = null;
 
+    await _stopWakeWordListening();
     await _stopCapture();
     errorMessage = null;
     liveTranscript = transcript;
@@ -405,8 +548,13 @@ class NovaProvider extends ChangeNotifier {
     errorMessage = null;
     liveTranscript = '';
     state = NovaAgentState.idle;
-    statusMessage = 'Tap the orb to speak';
+    statusMessage =
+        _wakeWordEnabled ? 'Say "Nova" to speak' : 'Tap the orb to speak';
     notifyListeners();
+
+    if (_wakeWordEnabled) {
+      unawaited(_startWakeWordListening());
+    }
   }
 
   void _updateAudioLevel(double level) {
@@ -431,6 +579,7 @@ class NovaProvider extends ChangeNotifier {
     _commandCaptureActive = false;
     _listenStartedAt = null;
     audioLevel = 0;
+    unawaited(_stopWakeWordListening());
     unawaited(_stopCapture());
     notifyListeners();
   }

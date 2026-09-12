@@ -5,6 +5,7 @@ class NovaConstants {
   static const prefsHasOnboarded = 'has_onboarded';
   static const prefsInstallationId = 'installation_id';
   static const prefsPreferredLanguage = 'preferred_language';
+  static const prefsWakeWordEnabled = 'wake_word_enabled';
 
   /// All cloud keys (Gemini, Sarvam, Cartesia) live on this worker.
   static const workerUrl = 'https://buddy-ai-worker.anilgithubd.workers.dev';

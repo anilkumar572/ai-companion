@@ -91,6 +91,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 28),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+            decoration: NovaTheme.glassCard(borderColor: NovaTheme.secondary),
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Wake word "Nova"'),
+              subtitle: const Text(
+                'Listen continuously and start when you say Nova.',
+              ),
+              value: provider.wakeWordEnabled,
+              onChanged: provider.setWakeWordEnabled,
+            ),
+          ),
+          const SizedBox(height: 28),
           Text(
             'Voice',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
