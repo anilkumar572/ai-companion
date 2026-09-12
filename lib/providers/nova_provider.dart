@@ -88,6 +88,7 @@ class NovaProvider extends ChangeNotifier {
 
     final speechReady = await _speech.initialize(
       onStatus: _handleSpeechStatus,
+      onError: _handleSpeechError,
     );
     await _tts.initialize(gender: voiceGender);
 
@@ -206,14 +207,14 @@ class NovaProvider extends ChangeNotifier {
           unawaited(_finalizeCapture(transcript.trim()));
         },
         onSoundLevel: _updateAudioLevel,
+        localeId: _speechLocaleId,
         listenFor: const Duration(seconds: 30),
         pauseFor: const Duration(seconds: 2),
         onDevice: true,
       );
     } catch (error) {
       _commandCaptureActive = false;
-      await _enterIdle();
-      _setRecoverableError('Could not start listening: $error');
+      _setRecoverableError('Could not start listening. Tap the orb to try again.');
     }
   }
 
@@ -221,6 +222,19 @@ class NovaProvider extends ChangeNotifier {
     await _speech.releaseMicrophone();
     audioLevel = 0;
     await _processTranscript(transcript);
+  }
+
+  String get _speechLocaleId =>
+      preferredLanguage.replaceAll('-', '_');
+
+  void _handleSpeechError(String message) {
+    if (state != NovaAgentState.listening) return;
+    _commandCaptureActive = false;
+    _setRecoverableError(
+      message.isEmpty
+          ? 'Speech recognition failed. Tap the orb to try again.'
+          : message,
+    );
   }
 
   void _handleSpeechStatus(String status) {
@@ -240,15 +254,17 @@ class NovaProvider extends ChangeNotifier {
     unawaited(_enterIdle());
   }
 
-  Future<void> _enterIdle() async {
+  Future<void> _enterIdle({bool clearError = true}) async {
     await _speech.releaseMicrophone();
     _processingTranscript = false;
     _commandCaptureActive = false;
-    errorMessage = null;
+    if (clearError) {
+      errorMessage = null;
+    }
     audioLevel = 0;
     liveTranscript = '';
     state = NovaAgentState.idle;
-    statusMessage = 'Tap the orb to speak';
+    statusMessage = errorMessage ?? 'Tap the orb to speak';
     notifyListeners();
   }
 
@@ -305,8 +321,8 @@ class NovaProvider extends ChangeNotifier {
         languageOverride: preferredLanguage,
       );
     } catch (error) {
-      _setRecoverableError('Voice playback failed. Please try again.');
-      await _enterIdle();
+      _processingTranscript = false;
+      _setRecoverableError('Voice playback failed. Tap the orb to try again.');
     }
   }
 
@@ -322,6 +338,7 @@ class NovaProvider extends ChangeNotifier {
     _processingTranscript = false;
     _commandCaptureActive = false;
     audioLevel = 0;
+    unawaited(_speech.releaseMicrophone());
     notifyListeners();
   }
 
