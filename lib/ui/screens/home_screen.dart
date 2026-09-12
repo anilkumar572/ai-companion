@@ -6,9 +6,8 @@ import '../../core/constants.dart';
 import '../../core/theme/nova_theme.dart';
 import '../../models/nova_state.dart';
 import '../../providers/nova_provider.dart';
-import '../widgets/hacker_background.dart';
+import '../widgets/nova_background.dart';
 import '../widgets/nova_orb.dart';
-import '../widgets/scanlines_overlay.dart';
 import '../widgets/status_hud.dart';
 import 'settings_screen.dart';
 
@@ -35,15 +34,26 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: Text(
-          '> ${NovaConstants.appName.toUpperCase()}_SYS',
-          style: const TextStyle(
-            letterSpacing: 3,
-            fontWeight: FontWeight.w700,
-            shadows: [
-              Shadow(color: NovaTheme.primary, blurRadius: 12),
-            ],
-          ),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: NovaTheme.accentGradient,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              NovaConstants.appName,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
+                  ),
+            ),
+          ],
         ),
         actions: [
           IconButton(
@@ -53,27 +63,29 @@ class _HomeScreenState extends State<HomeScreen> {
                 MaterialPageRoute(builder: (_) => const SettingsScreen()),
               );
             },
-            icon: const Icon(Icons.terminal_rounded),
+            icon: const Icon(Icons.tune_rounded),
           ),
         ],
       ),
       body: Stack(
         fit: StackFit.expand,
         children: [
-          const HackerBackground(),
-          const ScanlinesOverlay(),
+          const NovaBackground(),
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
+                  _ModeChip(isOnline: provider.isOnlineActive),
+                  const SizedBox(height: 10),
                   Text(
                     NovaConstants.tagline,
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: NovaTheme.textMuted,
-                          letterSpacing: 1.5,
+                          letterSpacing: 0.2,
+                          height: 1.4,
                         ),
                   ).animate().fadeIn(duration: 500.ms),
                   const Spacer(),
@@ -83,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     wakeWordListening: provider.wakeWordListening,
                     onTap: _handleOrbTap,
                   ),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 24),
                   StatusHud(
                     state: provider.state,
                     statusMessage: provider.statusMessage,
@@ -98,7 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     state: provider.state,
                     wakeWordListening: provider.wakeWordListening,
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                 ],
               ),
             ),
@@ -124,6 +136,45 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+class _ModeChip extends StatelessWidget {
+  const _ModeChip({required this.isOnline});
+
+  final bool isOnline;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: NovaTheme.surface.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: (isOnline ? NovaTheme.accent : NovaTheme.textMuted)
+              .withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isOnline ? Icons.cloud_outlined : Icons.offline_bolt_outlined,
+            size: 14,
+            color: isOnline ? NovaTheme.accent : NovaTheme.textMuted,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isOnline ? 'Online' : 'Offline',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: isOnline ? NovaTheme.accent : NovaTheme.textMuted,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _BottomHint extends StatelessWidget {
   const _BottomHint({
     required this.state,
@@ -137,21 +188,20 @@ class _BottomHint extends StatelessWidget {
   Widget build(BuildContext context) {
     final hint = switch (state) {
       NovaAgentState.idle when wakeWordListening =>
-        '> say "nova" to activate // tap core for manual uplink',
-      NovaAgentState.idle => '> tap core for manual uplink',
-      NovaAgentState.listening => '> uplink open — speak your command',
-      NovaAgentState.thinking => '> decrypting request...',
-      NovaAgentState.speaking => '> tap core to interrupt transmission',
-      NovaAgentState.error => '> check mic permissions and reboot link',
+        'Say "Nova" or tap the orb to speak',
+      NovaAgentState.idle => 'Tap the orb to start a conversation',
+      NovaAgentState.listening => 'Listening… tap the orb when you are done',
+      NovaAgentState.thinking => 'Thinking through your request',
+      NovaAgentState.speaking => 'Tap the orb to interrupt',
+      NovaAgentState.error => 'Check microphone permissions and try again',
     };
 
     return Text(
       hint,
       textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: NovaTheme.textMuted,
-            letterSpacing: 0.8,
-            height: 1.4,
+            height: 1.45,
           ),
     );
   }

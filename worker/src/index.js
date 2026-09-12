@@ -32,7 +32,7 @@ export default {
       return cors(json({
         ok: true,
         service: "buddy-ai-worker",
-        features: ["chat", "tts", "stt-stream"],
+        features: ["chat", "tts", "stt", "stt-stream"],
       }));
     }
 
@@ -42,6 +42,15 @@ export default {
 
     if (request.headers.get("Upgrade") === "websocket" && url.pathname === "/stt/ws") {
       return handleSttWebSocket(request, env, url);
+    }
+
+    if (request.method === "POST" && url.pathname === "/stt") {
+      try {
+        return cors(await handleSttRest(request, env));
+      } catch (err) {
+        console.error(err);
+        return cors(json({ error: "STT failed" }, 500));
+      }
     }
 
     if (request.method === "POST" && url.pathname === "/chat") {
@@ -66,12 +75,47 @@ export default {
   },
 };
 
-async function handleSttWebSocket(request, env, url) {
+function buildSarvamWsUrl(env, languageCode, model, mode) {
+  const sarvamUrl = new URL("https://api.sarvam.ai/speech-to-text/ws");
+  sarvamUrl.searchParams.set("language-code", languageCode);
+  sarvamUrl.searchParams.set("model", model);
+  sarvamUrl.searchParams.set("mode", mode);
+  sarvamUrl.searchParams.set("sample_rate", "16000");
+  sarvamUrl.searchParams.set("high_vad_sensitivity", "true");
+  sarvamUrl.searchParams.set("vad_signals", "true");
+  sarvamUrl.searchParams.set("flush_signal", "true");
+  sarvamUrl.searchParams.set("input_audio_codec", "pcm_s16le");
+  return sarvamUrl;
+}
+
+async function connectSarvamWebSocket(env, languageCode, model, mode) {
   const apiKey = env.SARVAM_API_KEY;
   if (!apiKey) {
-    return cors(json({ error: "Sarvam STT is not configured" }, 503));
+    throw new Error("Sarvam STT is not configured");
   }
 
+  const sarvamUrl = buildSarvamWsUrl(env, languageCode, model, mode);
+  const upstreamResponse = await fetch(sarvamUrl.toString(), {
+    headers: {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      "Api-Subscription-Key": apiKey,
+    },
+  });
+
+  if (upstreamResponse.status !== 101 || !upstreamResponse.webSocket) {
+    const detail = await upstreamResponse.text().catch(() => "");
+    throw new Error(
+      `Sarvam WebSocket handshake failed (${upstreamResponse.status})${detail ? `: ${detail.slice(0, 120)}` : ""}`
+    );
+  }
+
+  const upstream = upstreamResponse.webSocket;
+  upstream.accept({ allowHalfOpen: true });
+  return upstream;
+}
+
+async function handleSttWebSocket(request, env, url) {
   const installationId = String(url.searchParams.get("installationId") || "").slice(0, 80);
   if (!installationId) {
     return cors(json({ error: "installationId is required" }, 400));
@@ -91,44 +135,20 @@ async function handleSttWebSocket(request, env, url) {
   const model = String(url.searchParams.get("model") || env.SARVAM_MODEL || "saaras:v3");
   const mode = String(url.searchParams.get("mode") || env.SARVAM_MODE || "transcribe");
 
-  const sarvamUrl = new URL("wss://api.sarvam.ai/speech-to-text/ws");
-  sarvamUrl.searchParams.set("language-code", languageCode);
-  sarvamUrl.searchParams.set("model", model);
-  sarvamUrl.searchParams.set("mode", mode);
-  sarvamUrl.searchParams.set("sample_rate", "16000");
-  sarvamUrl.searchParams.set("high_vad_sensitivity", "true");
-  sarvamUrl.searchParams.set("vad_signals", "true");
-  sarvamUrl.searchParams.set("flush_signal", "true");
-  sarvamUrl.searchParams.set("input_audio_codec", "pcm_s16le");
+  let upstream;
+  try {
+    upstream = await connectSarvamWebSocket(env, languageCode, model, mode);
+  } catch (err) {
+    console.error("Sarvam WS connect failed", err);
+    return cors(json({
+      error: "Failed to connect to Sarvam STT",
+      detail: String(err?.message || err),
+    }, 502));
+  }
 
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair);
-  server.accept();
-
-  let upstream;
-  try {
-    const upstreamResponse = await fetch(sarvamUrl.toString(), {
-      headers: {
-        Upgrade: "websocket",
-        "Api-Subscription-Key": apiKey,
-      },
-    });
-
-    upstream = upstreamResponse.webSocket;
-    if (!upstream) {
-      server.close(1011, "Sarvam upstream unavailable");
-      return new Response(null, { status: 101, webSocket: client });
-    }
-    upstream.accept();
-  } catch (err) {
-    console.error("Sarvam WS connect failed", err);
-    server.send(JSON.stringify({
-      type: "error",
-      data: { error: "Failed to connect to Sarvam STT", code: "upstream_error" },
-    }));
-    server.close(1011, "Sarvam upstream failed");
-    return new Response(null, { status: 101, webSocket: client });
-  }
+  server.accept({ allowHalfOpen: true });
 
   const closeBoth = (code = 1000, reason = "closed") => {
     try { server.close(code, reason); } catch (_) {}
@@ -161,6 +181,91 @@ async function handleSttWebSocket(request, env, url) {
   return new Response(null, { status: 101, webSocket: client });
 }
 
+async function handleSttRest(request, env) {
+  const apiKey = env.SARVAM_API_KEY;
+  if (!apiKey) {
+    return json({ error: "Sarvam STT is not configured" }, 503);
+  }
+
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    return json({ error: "Content-Type must be application/json" }, 415);
+  }
+
+  const raw = await request.text();
+  if (raw.length > 8_000_000) {
+    return json({ error: "Request too large" }, 413);
+  }
+
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return json({ error: "Invalid JSON" }, 400);
+  }
+
+  const installationId = String(body.installationId || "").slice(0, 80);
+  const audioBase64 = String(body.audioBase64 || "").trim();
+  if (!installationId || !audioBase64) {
+    return json({ error: "installationId and audioBase64 are required" }, 400);
+  }
+
+  const rateLimit = Number(env.RATE_LIMIT_PER_MINUTE || 30);
+  if (!allowRequest(`${installationId}:stt`, rateLimit)) {
+    return json({ error: "Rate limit exceeded" }, 429);
+  }
+
+  const languageCode = String(
+    body.language_code || env.SARVAM_LANGUAGE_CODE || "unknown"
+  ).slice(0, 16);
+  const model = String(body.model || env.SARVAM_MODEL || "saaras:v3");
+  const mode = String(body.mode || env.SARVAM_MODE || "transcribe");
+
+  let audioBytes;
+  try {
+    audioBytes = Uint8Array.from(atob(audioBase64), (c) => c.charCodeAt(0));
+  } catch {
+    return json({ error: "Invalid audioBase64 payload" }, 400);
+  }
+
+  if (audioBytes.length === 0) {
+    return json({ error: "Empty audio payload" }, 400);
+  }
+
+  const form = new FormData();
+  form.append("file", new Blob([audioBytes], { type: "audio/wav" }), "audio.wav");
+  form.append("model", model);
+  form.append("mode", mode);
+  if (languageCode && languageCode !== "unknown") {
+    form.append("language_code", languageCode);
+  }
+
+  const sarvamRes = await fetch("https://api.sarvam.ai/speech-to-text", {
+    method: "POST",
+    headers: {
+      "api-subscription-key": apiKey,
+    },
+    body: form,
+  });
+
+  const sarvamData = await sarvamRes.json().catch(() => ({}));
+  if (!sarvamRes.ok) {
+    const message = sarvamData?.message || sarvamData?.error || `Sarvam STT HTTP ${sarvamRes.status}`;
+    return json({ error: message, status: sarvamRes.status }, 502);
+  }
+
+  const transcript = String(sarvamData.transcript || "").trim();
+  if (!transcript) {
+    return json({ error: "Sarvam returned an empty transcript" }, 502);
+  }
+
+  return json({
+    transcript,
+    language_code: sarvamData.language_code || languageCode,
+    request_id: sarvamData.request_id || null,
+  });
+}
+
 async function handleDebugAi(env) {
   try {
     const probe = [{
@@ -169,7 +274,7 @@ async function handleDebugAi(env) {
     }];
     const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
     if (googleKey) {
-      const model = env.GOOGLE_AI_MODEL || "gemini-2.5-flash-lite";
+      const model = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
       const extracted = await callGemini(env, probe, googleKey);
       return json({ ok: true, provider: "gemini", model, extracted });
     }
@@ -336,7 +441,7 @@ async function callBuddyAi(env, messages) {
 }
 
 async function callGemini(env, messages, apiKey) {
-  const model = env.GOOGLE_AI_MODEL || "gemini-2.5-flash-lite";
+  const model = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
   const systemParts = [];
   const contents = [];
 
