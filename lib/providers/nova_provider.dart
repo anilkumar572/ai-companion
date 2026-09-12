@@ -6,12 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
 import '../models/nova_state.dart';
-import '../models/operation_mode.dart';
-import '../models/tts_engine.dart';
 import '../models/voice_gender.dart';
 import '../services/calendar_service.dart';
 import '../services/camera_service.dart';
-import '../services/connectivity_service.dart';
 import '../services/contacts_service.dart';
 import '../services/conversation_service.dart';
 import '../services/nova_agent.dart';
@@ -20,7 +17,6 @@ import '../services/reminder_service.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
 import '../services/web_search_service.dart';
-import '../services/worker_stt_service.dart';
 import '../utils/wake_word_detector.dart';
 
 class NovaProvider extends ChangeNotifier {
@@ -53,28 +49,19 @@ class NovaProvider extends ChangeNotifier {
     required SpeechService speech,
     required TtsService tts,
     required ConversationService conversation,
-    ConnectivityService? connectivity,
-    WorkerSttService? workerStt,
   })  : _prefs = prefs,
         _speech = speech,
         _tts = tts,
-        _conversation = conversation,
-        _connectivity = connectivity ?? ConnectivityService(),
-        _workerStt = workerStt ?? WorkerSttService();
+        _conversation = conversation;
 
   final SharedPreferences _prefs;
   final SpeechService _speech;
   final TtsService _tts;
   final ConversationService _conversation;
-  final ConnectivityService _connectivity;
-  final WorkerSttService _workerStt;
 
   NovaAgentState state = NovaAgentState.idle;
   VoiceGender voiceGender = VoiceGender.female;
-  TtsEngine ttsEngine = TtsEngine.device;
-  OperationMode operationMode = OperationMode.auto;
-  bool isOnlineActive = false;
-  String statusMessage = '> initializing neural link...';
+  String statusMessage = 'Starting Nova…';
   String liveTranscript = '';
   String lastResponse = '';
   String? lastMediaPath;
@@ -87,16 +74,11 @@ class NovaProvider extends ChangeNotifier {
   bool _wakeWordEnabled = true;
   bool _awaitingCommand = false;
   bool _restartingWakeWord = false;
-  bool _processingWorkerStt = false;
-  bool _speechFallbackActive = false;
-  Timer? _sttCaptureTimer;
+  bool _commandCaptureActive = false;
+  bool _processingTranscript = false;
 
   Future<void> bootstrap() async {
     voiceGender = voiceGenderFromStorage(_prefs.getString(NovaConstants.prefsVoiceGender));
-    operationMode = OperationMode.fromStorage(
-      _prefs.getString(NovaConstants.prefsOperationMode),
-    );
-    _conversation.setLocalModelPath(_prefs.getString(NovaConstants.prefsLocalModelPath));
 
     final micGranted = await _requestMicPermission();
     if (!micGranted) {
@@ -111,8 +93,6 @@ class NovaProvider extends ChangeNotifier {
       onStatus: _handleSpeechStatus,
     );
     await _tts.initialize(gender: voiceGender);
-    ttsEngine = _tts.engine;
-    isOnlineActive = await _resolveOnlineMode();
 
     if (!speechReady) {
       errorMessage = 'Speech recognition is unavailable on this device.';
@@ -130,40 +110,9 @@ class NovaProvider extends ChangeNotifier {
   String get workerUrl => NovaConstants.workerUrl;
   String get preferredLanguage => _tts.preferredLanguage;
   String get installationId => _tts.installationId;
-  String get localModelPath => _prefs.getString(NovaConstants.prefsLocalModelPath) ?? '';
-
-  Future<void> setOperationMode(OperationMode mode) async {
-    operationMode = mode;
-    await _prefs.setString(NovaConstants.prefsOperationMode, mode.storageKey);
-    isOnlineActive = await _resolveOnlineMode();
-    await _applyModeDefaults();
-    notifyListeners();
-  }
 
   Future<void> setPreferredLanguage(String language) async {
     await _tts.setPreferredLanguage(language);
-    notifyListeners();
-  }
-
-  Future<void> updateLocalModelPath(String? path) async {
-    final cleaned = path?.trim() ?? '';
-    if (cleaned.isEmpty) {
-      await _prefs.remove(NovaConstants.prefsLocalModelPath);
-    } else {
-      await _prefs.setString(NovaConstants.prefsLocalModelPath, cleaned);
-    }
-    _conversation.setLocalModelPath(cleaned.isEmpty ? null : cleaned);
-    notifyListeners();
-  }
-
-  Future<void> setTtsEngine(TtsEngine engine) async {
-    if (ttsEngine == engine) {
-      await _tts.setEngine(engine, preview: true);
-      return;
-    }
-
-    ttsEngine = engine;
-    await _tts.setEngine(engine, preview: true);
     notifyListeners();
   }
 
@@ -187,47 +136,27 @@ class NovaProvider extends ChangeNotifier {
     }
 
     await _speech.stopListening();
-    await _workerStt.stopCapture();
     _wakeWordEnabled = false;
     wakeWordListening = false;
     _awaitingCommand = false;
-
     errorMessage = null;
     liveTranscript = '';
-    state = NovaAgentState.listening;
-    statusMessage = '> manual uplink active — speak now';
-    notifyListeners();
 
-    try {
-      if (isOnlineActive) {
-        unawaited(_startWorkerSttCapture());
-        return;
-      }
-
-      await _speech.startListening(
-        onResult: (transcript, isFinal) {
-          liveTranscript = transcript;
-          notifyListeners();
-          if (isFinal && transcript.trim().isNotEmpty) {
-            _processTranscript(transcript);
-          }
-        },
-        onSoundLevel: _updateAudioLevel,
-      );
-    } catch (error) {
-      _setError('Unable to start listening: $error');
-    }
+    await _startCommandListening(
+      statusMessage: 'Listening… speak your command',
+    );
   }
 
   Future<void> stopListening() async {
-    _sttCaptureTimer?.cancel();
-    if (_workerStt.isCapturing) {
-      await _finishWorkerSttCapture();
-      return;
-    }
-
     await _speech.stopListening();
+    _commandCaptureActive = false;
+
     if (state == NovaAgentState.listening) {
+      final transcript = liveTranscript.trim();
+      if (transcript.isNotEmpty) {
+        await _processTranscript(transcript);
+        return;
+      }
       await _startWakeWordListening();
     }
   }
@@ -237,136 +166,46 @@ class NovaProvider extends ChangeNotifier {
     await _startWakeWordListening();
   }
 
-  Future<bool> _resolveOnlineMode() async {
-    switch (operationMode) {
-      case OperationMode.online:
-        return true;
-      case OperationMode.offline:
-        return false;
-      case OperationMode.auto:
-        return await _connectivity.hasInternet();
-    }
-  }
-
-  Future<void> _applyModeDefaults() async {
-    if (isOnlineActive) {
-      if (ttsEngine != TtsEngine.cartesia) {
-        ttsEngine = TtsEngine.cartesia;
-        await _tts.setEngine(TtsEngine.cartesia);
-      }
-      return;
-    }
-
-    if (ttsEngine != TtsEngine.device) {
-      ttsEngine = TtsEngine.device;
-      await _tts.setEngine(TtsEngine.device);
-    }
-  }
-
-  Future<void> _startWorkerSttCapture() async {
-    _sttCaptureTimer?.cancel();
-    _speechFallbackActive = false;
-    await _speech.stopListening();
-
-    final supportsRestStt = await WorkerSttService.workerSupportsRestStt(workerUrl);
-    if (!supportsRestStt) {
-      await _handleOnlineSttFailure(
-        'Worker is missing POST /stt. Redeploy: cd worker && npx wrangler deploy',
-      );
-      return;
-    }
-
+  Future<void> _startCommandListening({
+    required String statusMessage,
+    void Function(String transcript, bool isFinal)? onResult,
+  }) async {
+    _commandCaptureActive = true;
     state = NovaAgentState.listening;
-    statusMessage = '> sarvam capture active — speak now';
+    this.statusMessage = statusMessage;
     notifyListeners();
 
-    try {
-      await _workerStt.startCapture();
-      statusMessage = '> recording for sarvam stt...';
-      notifyListeners();
-
-      _sttCaptureTimer = Timer(const Duration(seconds: 12), () {
-        unawaited(_finishWorkerSttCapture());
-      });
-    } catch (error) {
-      await _handleOnlineSttFailure('Could not start Sarvam capture: $error');
-    }
-  }
-
-  Future<void> _finishWorkerSttCapture() async {
-    if (_processingWorkerStt) return;
-    _sttCaptureTimer?.cancel();
-
-    if (!_workerStt.isCapturing) {
-      if (state == NovaAgentState.listening) {
-        await _startWakeWordListening();
-      }
-      return;
-    }
-
-    _processingWorkerStt = true;
-    state = NovaAgentState.thinking;
-    statusMessage = '> sarvam stt processing...';
-    notifyListeners();
-
-    try {
-      final transcript = await _workerStt.stopAndTranscribe(
-        workerBaseUrl: workerUrl,
-        installationId: installationId,
-        languageCode: NovaConstants.defaultSttLanguage,
-      );
-      liveTranscript = transcript;
-      notifyListeners();
-      await _processTranscript(transcript);
-    } catch (error) {
-      _processingWorkerStt = false;
-      await _handleOnlineSttFailure('Sarvam STT failed: $error');
-    }
-  }
-
-  Future<void> _handleOnlineSttFailure(String message) async {
-    _sttCaptureTimer?.cancel();
-    await _workerStt.stopCapture();
-    await _speech.stopListening();
-    _processingWorkerStt = false;
-    _speechFallbackActive = true;
-    state = NovaAgentState.listening;
-    statusMessage = '> stt fallback :: using device speech';
-    errorMessage = message;
-    notifyListeners();
-
-    try {
-      await _speech.startListening(
-        onResult: (transcript, isFinal) {
-          liveTranscript = transcript;
-          notifyListeners();
-          if (isFinal && transcript.trim().isNotEmpty) {
-            _speechFallbackActive = false;
-            errorMessage = null;
-            unawaited(_processTranscript(transcript));
-          }
-        },
-        onSoundLevel: _updateAudioLevel,
-        listenFor: const Duration(seconds: 10),
-        pauseFor: const Duration(seconds: 2),
-        onDevice: true,
-      );
-    } catch (_) {
-      _speechFallbackActive = false;
-      _setRecoverableError(message);
-      await _startWakeWordListening();
-    }
+    await _speech.startListening(
+      onResult: onResult ??
+          (transcript, isFinal) {
+            liveTranscript = transcript;
+            notifyListeners();
+            if (isFinal && transcript.trim().isNotEmpty && !_processingTranscript) {
+              _commandCaptureActive = false;
+              unawaited(_processTranscript(transcript.trim()));
+            }
+          },
+      onSoundLevel: _updateAudioLevel,
+      listenFor: const Duration(seconds: 15),
+      pauseFor: const Duration(seconds: 3),
+      onDevice: false,
+    );
   }
 
   void _handleSpeechStatus(String status) {
     if (status != 'done' && status != 'notListening') return;
     if (_speech.isListening) return;
 
-    if (_speechFallbackActive && state == NovaAgentState.listening) {
-      _speechFallbackActive = false;
-      errorMessage = null;
-      liveTranscript = '';
-      unawaited(_startWakeWordListening());
+    if (_commandCaptureActive && state == NovaAgentState.listening) {
+      _commandCaptureActive = false;
+      final transcript = liveTranscript.trim();
+      if (transcript.isNotEmpty && !_processingTranscript) {
+        unawaited(_processTranscript(transcript));
+      } else {
+        errorMessage = null;
+        liveTranscript = '';
+        unawaited(_startWakeWordListening());
+      }
       return;
     }
 
@@ -394,19 +233,15 @@ class NovaProvider extends ChangeNotifier {
   Future<void> _startWakeWordListening() async {
     if (!_speech.isAvailable) return;
 
-    isOnlineActive = await _resolveOnlineMode();
-    await _applyModeDefaults();
-    _processingWorkerStt = false;
-    _speechFallbackActive = false;
+    _processingTranscript = false;
+    _commandCaptureActive = false;
     errorMessage = null;
 
     _wakeWordEnabled = true;
     _awaitingCommand = false;
     wakeWordListening = true;
     state = NovaAgentState.idle;
-    statusMessage = isOnlineActive
-        ? '> online mode :: listening for wake word "${NovaConstants.wakeWord}"...'
-        : '> offline mode :: listening for wake word "${NovaConstants.wakeWord}"...';
+    statusMessage = 'Say "${NovaConstants.wakeWord}" to wake me up';
     audioLevel = 0;
     notifyListeners();
 
@@ -432,7 +267,7 @@ class NovaProvider extends ChangeNotifier {
         _wakeWordEnabled = false;
         wakeWordListening = false;
         _awaitingCommand = false;
-        _processTranscript(transcript);
+        unawaited(_processTranscript(transcript.trim()));
       }
       return;
     }
@@ -443,41 +278,24 @@ class NovaProvider extends ChangeNotifier {
     if (WakeWordDetector.shouldProcess(transcript, isFinal) && command.isNotEmpty) {
       _wakeWordEnabled = false;
       wakeWordListening = false;
-      _speech.stopListening();
+      unawaited(_speech.stopListening());
       liveTranscript = command;
       notifyListeners();
-      _processTranscript(command);
+      unawaited(_processTranscript(command));
       return;
     }
 
     if (isFinal && command.isEmpty) {
       _awaitingCommand = true;
       wakeWordListening = false;
-      state = NovaAgentState.listening;
-      statusMessage = isOnlineActive
-          ? '> nova online — sarvam capture listening'
-          : '> nova offline — awaiting command';
-      notifyListeners();
       unawaited(() async {
         await _speech.stopListening();
-        await _beginCommandCapture();
+        await _startCommandListening(
+          statusMessage: 'Nova is listening…',
+          onResult: _handleWakeWordResult,
+        );
       }());
     }
-  }
-
-  Future<void> _beginCommandCapture() async {
-    if (isOnlineActive) {
-      await _startWorkerSttCapture();
-      return;
-    }
-
-    await _speech.startListening(
-      onResult: _handleWakeWordResult,
-      onSoundLevel: _updateAudioLevel,
-      listenFor: const Duration(seconds: 12),
-      pauseFor: const Duration(seconds: 3),
-      onDevice: true,
-    );
   }
 
   void _updateAudioLevel(double level) {
@@ -486,31 +304,27 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> _processTranscript(String transcript) async {
-    _sttCaptureTimer?.cancel();
+    if (_processingTranscript) return;
+    _processingTranscript = true;
+
     await _speech.stopListening();
-    await _workerStt.stopCapture();
-    _speechFallbackActive = false;
+    _commandCaptureActive = false;
     _wakeWordEnabled = false;
     wakeWordListening = false;
     _awaitingCommand = false;
     errorMessage = null;
+    liveTranscript = transcript;
 
     state = NovaAgentState.thinking;
-    statusMessage = isOnlineActive
-        ? '> cloud brain processing...'
-        : '> local brain processing...';
+    statusMessage = 'Thinking…';
     notifyListeners();
 
     try {
-      isOnlineActive = await _resolveOnlineMode();
-      await _applyModeDefaults();
-
       final result = await _conversation.respond(
         input: transcript,
-        online: isOnlineActive,
         workerBaseUrl: workerUrl,
         installationId: installationId,
-        language: isOnlineActive ? preferredLanguage : 'auto',
+        language: preferredLanguage,
       );
 
       if (result.voiceGenderChange != null &&
@@ -527,20 +341,20 @@ class NovaProvider extends ChangeNotifier {
       lastMediaPath = result.mediaPath;
       lastMediaIsVideo = result.isVideo;
       state = NovaAgentState.speaking;
-      statusMessage = '> transmitting response...';
+      statusMessage = 'Speaking…';
       notifyListeners();
 
       await _tts.speak(
         result.message,
         onComplete: () async {
-          _processingWorkerStt = false;
+          _processingTranscript = false;
           await _startWakeWordListening();
         },
-        languageOverride: isOnlineActive ? preferredLanguage : null,
+        languageOverride: preferredLanguage,
       );
     } catch (error) {
-      _processingWorkerStt = false;
-      _setError('I encountered an error while processing your request.');
+      _processingTranscript = false;
+      _setRecoverableError('Voice playback failed. Please try again.');
       await _startWakeWordListening();
     }
   }
@@ -550,25 +364,19 @@ class NovaProvider extends ChangeNotifier {
     return status.isGranted;
   }
 
-  void _setError(String message) {
-    _setRecoverableError(message);
-  }
-
   void _setRecoverableError(String message) {
     errorMessage = message;
     state = NovaAgentState.error;
-    statusMessage = '> fault :: $message';
+    statusMessage = message;
     wakeWordListening = false;
-    _processingWorkerStt = false;
+    _processingTranscript = false;
     notifyListeners();
   }
 
   @override
   void dispose() {
     _wakeWordEnabled = false;
-    _sttCaptureTimer?.cancel();
     _speech.dispose();
-    _workerStt.dispose();
     _tts.dispose();
     super.dispose();
   }

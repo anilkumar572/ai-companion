@@ -66,13 +66,7 @@ class StatusHud extends StatelessWidget {
     );
   }
 
-  String _humanizeStatus(String raw) {
-    return raw
-        .replaceAll('> ', '')
-        .replaceAll('::', ' · ')
-        .replaceAll('_', ' ')
-        .trim();
-  }
+  String _humanizeStatus(String raw) => raw.trim();
 }
 
 class _StatusChip extends StatelessWidget {

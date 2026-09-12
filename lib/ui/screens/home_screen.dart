@@ -77,7 +77,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 children: [
                   const SizedBox(height: 6),
-                  _ModeChip(isOnline: provider.isOnlineActive),
+                  const _ModeChip(),
                   const SizedBox(height: 10),
                   Text(
                     NovaConstants.tagline,
@@ -137,9 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _ModeChip extends StatelessWidget {
-  const _ModeChip({required this.isOnline});
-
-  final bool isOnline;
+  const _ModeChip();
 
   @override
   Widget build(BuildContext context) {
@@ -149,23 +147,22 @@ class _ModeChip extends StatelessWidget {
         color: NovaTheme.surface.withValues(alpha: 0.65),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: (isOnline ? NovaTheme.accent : NovaTheme.textMuted)
-              .withValues(alpha: 0.35),
+          color: NovaTheme.accent.withValues(alpha: 0.35),
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isOnline ? Icons.cloud_outlined : Icons.offline_bolt_outlined,
+            Icons.cloud_outlined,
             size: 14,
-            color: isOnline ? NovaTheme.accent : NovaTheme.textMuted,
+            color: NovaTheme.accent,
           ),
           const SizedBox(width: 6),
           Text(
-            isOnline ? 'Online' : 'Offline',
+            'Cloud',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: isOnline ? NovaTheme.accent : NovaTheme.textMuted,
+                  color: NovaTheme.accent,
                   fontWeight: FontWeight.w600,
                 ),
           ),

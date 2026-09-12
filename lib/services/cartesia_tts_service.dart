@@ -43,6 +43,10 @@ class CartesiaTtsService {
     if (bytes.isEmpty) {
       throw const CartesiaTtsException('Cartesia returned empty audio');
     }
+    if (bytes.length < 12 ||
+        String.fromCharCodes(bytes.take(4)) != 'RIFF') {
+      throw const CartesiaTtsException('Cartesia returned invalid audio data');
+    }
 
     return Uint8List.fromList(bytes);
   }
