@@ -18,13 +18,29 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<NovaProvider>().bootstrap();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
+    if (lifecycleState == AppLifecycleState.paused ||
+        lifecycleState == AppLifecycleState.inactive ||
+        lifecycleState == AppLifecycleState.detached) {
+      context.read<NovaProvider>().releaseMicrophone();
+    }
   }
 
   @override
@@ -76,8 +92,6 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
-                  const SizedBox(height: 6),
-                  _ModeChip(isOnline: provider.isOnlineActive),
                   const SizedBox(height: 10),
                   Text(
                     NovaConstants.tagline,
@@ -92,7 +106,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   NovaOrb(
                     state: provider.state,
                     audioLevel: provider.audioLevel,
-                    wakeWordListening: provider.wakeWordListening,
                     onTap: _handleOrbTap,
                   ),
                   const SizedBox(height: 24),
@@ -103,13 +116,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     lastResponse: provider.lastResponse,
                     mediaPath: provider.lastMediaPath,
                     isVideo: provider.lastMediaIsVideo,
-                    wakeWordListening: provider.wakeWordListening,
                   ),
                   const Spacer(),
-                  _BottomHint(
-                    state: provider.state,
-                    wakeWordListening: provider.wakeWordListening,
-                  ),
+                  _BottomHint(state: provider.state),
                   const SizedBox(height: 16),
                 ],
               ),
@@ -136,64 +145,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class _ModeChip extends StatelessWidget {
-  const _ModeChip({required this.isOnline});
-
-  final bool isOnline;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: NovaTheme.surface.withValues(alpha: 0.65),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: (isOnline ? NovaTheme.accent : NovaTheme.textMuted)
-              .withValues(alpha: 0.35),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isOnline ? Icons.cloud_outlined : Icons.offline_bolt_outlined,
-            size: 14,
-            color: isOnline ? NovaTheme.accent : NovaTheme.textMuted,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            isOnline ? 'Online' : 'Offline',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: isOnline ? NovaTheme.accent : NovaTheme.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _BottomHint extends StatelessWidget {
-  const _BottomHint({
-    required this.state,
-    required this.wakeWordListening,
-  });
+  const _BottomHint({required this.state});
 
   final NovaAgentState state;
-  final bool wakeWordListening;
 
   @override
   Widget build(BuildContext context) {
     final hint = switch (state) {
-      NovaAgentState.idle when wakeWordListening =>
-        'Say "Nova" or tap the orb to speak',
-      NovaAgentState.idle => 'Tap the orb to start a conversation',
-      NovaAgentState.listening => 'Listening… tap the orb when you are done',
+      NovaAgentState.idle => 'Tap the orb to speak',
+      NovaAgentState.listening => 'Speak now — tap the orb when finished',
       NovaAgentState.thinking => 'Thinking through your request',
-      NovaAgentState.speaking => 'Tap the orb to interrupt',
-      NovaAgentState.error => 'Check microphone permissions and try again',
+      NovaAgentState.speaking => 'Tap the orb to stop speaking',
+      NovaAgentState.error => 'Tap the orb to try again',
     };
 
     return Text(

@@ -16,7 +16,6 @@ class StatusHud extends StatelessWidget {
     required this.lastResponse,
     this.mediaPath,
     this.isVideo = false,
-    this.wakeWordListening = false,
   });
 
   final NovaAgentState state;
@@ -25,17 +24,13 @@ class StatusHud extends StatelessWidget {
   final String lastResponse;
   final String? mediaPath;
   final bool isVideo;
-  final bool wakeWordListening;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _StatusChip(
-          state: state,
-          wakeWordListening: wakeWordListening,
-        ),
+        _StatusChip(state: state),
         const SizedBox(height: 12),
         _GlassLine(
           icon: Icons.auto_awesome_outlined,
@@ -66,28 +61,18 @@ class StatusHud extends StatelessWidget {
     );
   }
 
-  String _humanizeStatus(String raw) {
-    return raw
-        .replaceAll('> ', '')
-        .replaceAll('::', ' · ')
-        .replaceAll('_', ' ')
-        .trim();
-  }
+  String _humanizeStatus(String raw) => raw.trim();
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({
-    required this.state,
-    required this.wakeWordListening,
-  });
+  const _StatusChip({required this.state});
 
   final NovaAgentState state;
-  final bool wakeWordListening;
 
   @override
   Widget build(BuildContext context) {
     final color = _colorForState(state);
-    final label = state.label(wakeWordListening: wakeWordListening);
+    final label = state.label;
 
     return Align(
       child: Container(

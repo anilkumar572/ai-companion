@@ -24,29 +24,26 @@ void main() {
     );
   }
 
-  test('offline mode uses local engine for open chat', () async {
-    final service = await buildService();
-    final result = await service.respond(
-      input: 'I feel tired today',
-      online: false,
-      workerBaseUrl: 'https://example.com',
-      installationId: 'test-installation',
-    );
-
-    expect(result.deferToCloud, isFalse);
-    expect(result.message.toLowerCase(), isNot(contains('configured for voice')));
-  });
-
-  test('device commands stay local even when online flag is true', () async {
+  test('device commands stay local', () async {
     final service = await buildService();
     final result = await service.respond(
       input: 'Hello Nova',
-      online: true,
       workerBaseUrl: 'https://example.com',
       installationId: 'test-installation',
     );
 
     expect(result.deferToCloud, isFalse);
     expect(result.message.toLowerCase(), contains('nova'));
+  });
+
+  test('open chat uses cloud fallback message when worker is unavailable', () async {
+    final service = await buildService();
+    final result = await service.respond(
+      input: 'I feel tired today',
+      workerBaseUrl: 'https://example.com',
+      installationId: 'test-installation',
+    );
+
+    expect(result.message.toLowerCase(), contains('cloud service'));
   });
 }

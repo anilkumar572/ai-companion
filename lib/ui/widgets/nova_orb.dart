@@ -130,7 +130,8 @@ class _NovaOrbPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final baseRadius = size.shortestSide * 0.22;
     final colors = _paletteForState(state);
-    final reactiveBoost = state == NovaAgentState.listening ? audioLevel * 18 : 0;
+    final reactiveBoost =
+        state == NovaAgentState.listening && audioLevel > 0.01 ? audioLevel * 18 : 0;
 
     _drawGlow(canvas, center, baseRadius + 42 + pulse * 18 + reactiveBoost, colors.glow);
     _drawRings(canvas, center, baseRadius, colors);
