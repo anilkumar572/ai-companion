@@ -76,8 +76,6 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
-                  const SizedBox(height: 6),
-                  const _ModeChip(),
                   const SizedBox(height: 10),
                   Text(
                     NovaConstants.tagline,
@@ -128,42 +126,6 @@ class _HomeScreenState extends State<HomeScreen> {
       case NovaAgentState.thinking:
         break;
     }
-  }
-}
-
-class _ModeChip extends StatelessWidget {
-  const _ModeChip();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: NovaTheme.surface.withValues(alpha: 0.65),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: NovaTheme.accent.withValues(alpha: 0.35),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.cloud_outlined,
-            size: 14,
-            color: NovaTheme.accent,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            'Cloud',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: NovaTheme.accent,
-                  fontWeight: FontWeight.w600,
-                ),
-          ),
-        ],
-      ),
-    );
   }
 }
 

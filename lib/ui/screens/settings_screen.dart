@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/constants.dart';
 import '../../core/theme/nova_theme.dart';
 import '../../models/voice_gender.dart';
 import '../../providers/nova_provider.dart';
@@ -39,7 +38,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await provider.setPreferredLanguage(_languageController.text);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Language preference saved')),
+      const SnackBar(content: Text('Language saved')),
     );
   }
 
@@ -55,16 +54,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          _InfoCard(
-            title: 'Cloud backend',
-            body:
-                'Worker: ${NovaConstants.workerUrl}\n'
-                'STT: device speech recognition\n'
-                'Chat: POST /chat (Gemini)\n'
-                'TTS: POST /tts (Cartesia)\n\n'
-                'Nova requires internet. API keys stay on Cloudflare.',
-          ),
-          const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(18),
             decoration: NovaTheme.glassCard(borderColor: NovaTheme.primary),
@@ -72,21 +61,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Preferred Language',
+                  'Language',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         color: NovaTheme.accent,
                       ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Used for cloud chat and Cartesia voice.',
+                  'Nova will chat and speak in this language.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: NovaTheme.textMuted,
                       ),
                 ),
                 const SizedBox(height: 16),
                 _SettingsField(
-                  label: 'Language',
+                  label: 'Language code',
                   controller: _languageController,
                   hint: 'en-IN, hi-IN, te-IN',
                 ),
@@ -95,7 +84,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   width: double.infinity,
                   child: FilledButton(
                     onPressed: () => _saveLanguage(provider),
-                    child: const Text('Save Language'),
+                    child: const Text('Save'),
                   ),
                 ),
               ],
@@ -103,14 +92,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 28),
           Text(
-            'Voice Profile',
+            'Voice',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: NovaTheme.primary,
                 ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Cartesia voice IDs are configured on the worker.',
+            'Choose how Nova sounds.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: NovaTheme.textMuted,
                 ),
@@ -122,12 +111,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               selected: provider.voiceGender == gender,
               onTap: () => provider.setVoiceGender(gender),
             ),
-          ),
-          const SizedBox(height: 16),
-          _InfoCard(
-            title: 'Cartesia voice (worker)',
-            body:
-                'Set CARTESIA_VOICE_ID and CARTESIA_MALE_VOICE_ID in Cloudflare Worker secrets/vars.',
           ),
         ],
       ),
@@ -209,43 +192,6 @@ class _VoiceOptionTile extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _InfoCard extends StatelessWidget {
-  const _InfoCard({
-    required this.title,
-    required this.body,
-  });
-
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: NovaTheme.glassCard(borderColor: NovaTheme.secondary),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: NovaTheme.accent,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            body,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: NovaTheme.textMuted,
-                  height: 1.5,
-                ),
-          ),
-        ],
       ),
     );
   }
