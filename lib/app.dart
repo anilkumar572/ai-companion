@@ -18,7 +18,7 @@ class NovaApp extends StatelessWidget {
       child: MaterialApp(
         title: 'Nova',
         debugShowCheckedModeBanner: false,
-        theme: NovaTheme.hacker(),
+        theme: NovaTheme.nova(),
         home: const HomeScreen(),
       ),
     );
