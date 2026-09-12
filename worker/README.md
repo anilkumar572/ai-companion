@@ -30,7 +30,7 @@ npx wrangler secret put BRAVE_API_KEY
 - `CARTESIA_LANGUAGE` — default `en-IN`
 - `SARVAM_MODEL` — e.g. `saaras:v3`
 - `SARVAM_LANGUAGE_CODE` — `unknown` for auto-detect
-- `GOOGLE_AI_MODEL` — e.g. `gemini-2.5-flash-lite`
+- `GOOGLE_AI_MODEL` — e.g. `gemini-3.5-flash-lite`
 
 ## Deploy
 
@@ -39,6 +39,24 @@ cd worker
 npm install
 npx wrangler deploy
 ```
+
+If Wrangler warns that local config differs from the dashboard, update `wrangler.toml`
+to match the dashboard values, then deploy again. Secrets (`*_API_KEY`) are never
+stored in `wrangler.toml` — only in Cloudflare secrets.
+
+### Dashboard vars (must match `wrangler.toml`)
+
+| Name | Example |
+|------|---------|
+| `GOOGLE_AI_MODEL` | `gemini-3.5-flash-lite` |
+| `CARTESIA_MODEL` | `sonic-3.6` |
+| `CARTESIA_VOICE_ID` | female voice UUID |
+| `CARTESIA_MALE_VOICE_ID` | male voice UUID (optional) |
+| `SARVAM_MODEL` | `saaras:v3` |
+| `SARVAM_MODE` | `transcribe` |
+| `SARVAM_LANGUAGE_CODE` | `unknown` |
+
+Also enable **Workers AI** binding `AI` in `wrangler.toml` for Llama fallback.
 
 ## STT WebSocket
 
