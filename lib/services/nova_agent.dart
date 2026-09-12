@@ -32,7 +32,11 @@ class NovaAgent {
   final ContactsService _contacts;
   final PhoneService _phone;
 
-  Future<AgentResult> respond(String input) async {
+  Future<AgentResult> respond(
+    String input, {
+    bool allowWebSearch = true,
+    bool allowCloudDeferral = false,
+  }) async {
     final text = _cleanInput(input);
     if (text.isEmpty) {
       return const AgentResult(
@@ -160,20 +164,31 @@ class NovaAgent {
       );
     }
 
-    if (_looksLikeSearchCommand(normalized)) {
+    if (allowCloudDeferral &&
+        (_looksLikeSearchCommand(normalized) || _looksLikeQuestion(normalized))) {
+      return AgentResult.cloudDeferral;
+    }
+
+    if (allowWebSearch && _looksLikeSearchCommand(normalized)) {
       final query = _extractSearchQuery(text, normalized);
       final result = await _webSearch.search(query);
       return AgentResult(message: result);
     }
 
-    if (_looksLikeQuestion(normalized)) {
+    if (allowWebSearch && _looksLikeQuestion(normalized)) {
       final result = await _webSearch.search(text);
       return AgentResult(message: result);
     }
 
-    final fallbackSearch = await _webSearch.search(text);
-    if (!fallbackSearch.contains('could not find reliable information')) {
-      return AgentResult(message: fallbackSearch);
+    if (allowCloudDeferral) {
+      return AgentResult.cloudDeferral;
+    }
+
+    if (allowWebSearch) {
+      final fallbackSearch = await _webSearch.search(text);
+      if (!fallbackSearch.contains('could not find reliable information')) {
+        return AgentResult(message: fallbackSearch);
+      }
     }
 
     return AgentResult(message: _capabilities());

@@ -1,17 +1,23 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
 import '../models/nova_state.dart';
+import '../models/operation_mode.dart';
 import '../models/tts_engine.dart';
 import '../models/voice_gender.dart';
 import '../services/calendar_service.dart';
 import '../services/camera_service.dart';
+import '../services/connectivity_service.dart';
 import '../services/contacts_service.dart';
+import '../services/conversation_service.dart';
 import '../services/nova_agent.dart';
 import '../services/phone_service.dart';
 import '../services/reminder_service.dart';
+import '../services/sarvam_stt_service.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
 import '../services/web_search_service.dart';
@@ -26,18 +32,19 @@ class NovaProvider extends ChangeNotifier {
     final contacts = ContactsService();
     final phone = PhoneService();
     final speech = SpeechService();
+    final agent = NovaAgent(
+      reminders: reminders,
+      calendar: calendar,
+      webSearch: webSearch,
+      camera: camera,
+      contacts: contacts,
+      phone: phone,
+    );
     return NovaProvider._(
       prefs: prefs,
       speech: speech,
       tts: TtsService(prefs: prefs),
-      agent: NovaAgent(
-        reminders: reminders,
-        calendar: calendar,
-        webSearch: webSearch,
-        camera: camera,
-        contacts: contacts,
-        phone: phone,
-      ),
+      conversation: ConversationService(deviceAgent: agent),
     );
   }
 
@@ -45,20 +52,28 @@ class NovaProvider extends ChangeNotifier {
     required SharedPreferences prefs,
     required SpeechService speech,
     required TtsService tts,
-    required NovaAgent agent,
+    required ConversationService conversation,
+    ConnectivityService? connectivity,
+    SarvamSttService? sarvam,
   })  : _prefs = prefs,
         _speech = speech,
         _tts = tts,
-        _agent = agent;
+        _conversation = conversation,
+        _connectivity = connectivity ?? ConnectivityService(),
+        _sarvam = sarvam ?? const SarvamSttService();
 
   final SharedPreferences _prefs;
   final SpeechService _speech;
   final TtsService _tts;
-  final NovaAgent _agent;
+  final ConversationService _conversation;
+  final ConnectivityService _connectivity;
+  final SarvamSttService _sarvam;
 
   NovaAgentState state = NovaAgentState.idle;
   VoiceGender voiceGender = VoiceGender.female;
   TtsEngine ttsEngine = TtsEngine.device;
+  OperationMode operationMode = OperationMode.auto;
+  bool isOnlineActive = false;
   String statusMessage = '> initializing neural link...';
   String liveTranscript = '';
   String lastResponse = '';
@@ -72,9 +87,15 @@ class NovaProvider extends ChangeNotifier {
   bool _wakeWordEnabled = true;
   bool _awaitingCommand = false;
   bool _restartingWakeWord = false;
+  Timer? _sarvamCaptureTimer;
 
   Future<void> bootstrap() async {
     voiceGender = voiceGenderFromStorage(_prefs.getString(NovaConstants.prefsVoiceGender));
+    operationMode = OperationMode.fromStorage(
+      _prefs.getString(NovaConstants.prefsOperationMode),
+    );
+    _conversation.setLocalModelPath(_prefs.getString(NovaConstants.prefsLocalModelPath));
+
     final micGranted = await _requestMicPermission();
     if (!micGranted) {
       errorMessage = 'Microphone permission is required for voice interaction.';
@@ -89,6 +110,7 @@ class NovaProvider extends ChangeNotifier {
     );
     await _tts.initialize(gender: voiceGender);
     ttsEngine = _tts.engine;
+    isOnlineActive = await _resolveOnlineMode();
 
     if (!speechReady) {
       errorMessage = 'Speech recognition is unavailable on this device.';
@@ -109,6 +131,50 @@ class NovaProvider extends ChangeNotifier {
   String get cartesiaFemaleVoiceId => _tts.cartesiaFemaleVoiceId;
   String get cartesiaMaleVoiceId => _tts.cartesiaMaleVoiceId;
   String get installationId => _tts.installationId;
+  String get sarvamApiKey => _prefs.getString(NovaConstants.prefsSarvamApiKey) ?? '';
+  String get sarvamLanguage =>
+      _prefs.getString(NovaConstants.prefsSarvamLanguage) ??
+      NovaConstants.defaultSarvamLanguage;
+  String get sarvamModel =>
+      _prefs.getString(NovaConstants.prefsSarvamModel) ??
+      NovaConstants.defaultSarvamModel;
+  String get localModelPath => _prefs.getString(NovaConstants.prefsLocalModelPath) ?? '';
+
+  Future<void> setOperationMode(OperationMode mode) async {
+    operationMode = mode;
+    await _prefs.setString(NovaConstants.prefsOperationMode, mode.storageKey);
+    isOnlineActive = await _resolveOnlineMode();
+    await _applyModeDefaults();
+    notifyListeners();
+  }
+
+  Future<void> updateSarvamSettings({
+    String? apiKey,
+    String? language,
+    String? model,
+  }) async {
+    if (apiKey != null) {
+      await _prefs.setString(NovaConstants.prefsSarvamApiKey, apiKey.trim());
+    }
+    if (language != null) {
+      await _prefs.setString(NovaConstants.prefsSarvamLanguage, language.trim());
+    }
+    if (model != null) {
+      await _prefs.setString(NovaConstants.prefsSarvamModel, model.trim());
+    }
+    notifyListeners();
+  }
+
+  Future<void> updateLocalModelPath(String? path) async {
+    final cleaned = path?.trim() ?? '';
+    if (cleaned.isEmpty) {
+      await _prefs.remove(NovaConstants.prefsLocalModelPath);
+    } else {
+      await _prefs.setString(NovaConstants.prefsLocalModelPath, cleaned);
+    }
+    _conversation.setLocalModelPath(cleaned.isEmpty ? null : cleaned);
+    notifyListeners();
+  }
 
   Future<void> setTtsEngine(TtsEngine engine) async {
     if (ttsEngine == engine) {
@@ -174,6 +240,11 @@ class NovaProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      if (await _shouldUseSarvam()) {
+        await _startSarvamCapture();
+        return;
+      }
+
       await _speech.startListening(
         onResult: (transcript, isFinal) {
           liveTranscript = transcript;
@@ -190,6 +261,13 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> stopListening() async {
+    _sarvamCaptureTimer?.cancel();
+    if (await _speech.isRecording()) {
+      final audioPath = await _speech.stopCommandRecording();
+      await _transcribeSarvamRecording(audioPath);
+      return;
+    }
+
     await _speech.stopListening();
     if (state == NovaAgentState.listening) {
       await _startWakeWordListening();
@@ -199,6 +277,77 @@ class NovaProvider extends ChangeNotifier {
   Future<void> stopSpeaking() async {
     await _tts.stop();
     await _startWakeWordListening();
+  }
+
+  Future<bool> _resolveOnlineMode() async {
+    switch (operationMode) {
+      case OperationMode.online:
+        return true;
+      case OperationMode.offline:
+        return false;
+      case OperationMode.auto:
+        return await _connectivity.hasInternet();
+    }
+  }
+
+  Future<void> _applyModeDefaults() async {
+    if (isOnlineActive) {
+      if (ttsEngine != TtsEngine.cartesia) {
+        ttsEngine = TtsEngine.cartesia;
+        await _tts.setEngine(TtsEngine.cartesia);
+      }
+      return;
+    }
+
+    if (ttsEngine != TtsEngine.device) {
+      ttsEngine = TtsEngine.device;
+      await _tts.setEngine(TtsEngine.device);
+    }
+  }
+
+  Future<bool> _shouldUseSarvam() async {
+    return isOnlineActive && sarvamApiKey.trim().isNotEmpty;
+  }
+
+  Future<void> _startSarvamCapture() async {
+    await _speech.startCommandRecording();
+    statusMessage = '> sarvam capture active — speak now';
+    notifyListeners();
+
+    _sarvamCaptureTimer?.cancel();
+    _sarvamCaptureTimer = Timer(const Duration(seconds: 12), () async {
+      if (state != NovaAgentState.listening) return;
+      final audioPath = await _speech.stopCommandRecording();
+      await _transcribeSarvamRecording(audioPath);
+    });
+  }
+
+  Future<void> _transcribeSarvamRecording(String? audioPath) async {
+    _sarvamCaptureTimer?.cancel();
+    if (audioPath == null || audioPath.isEmpty) {
+      _setError('No audio was captured for Sarvam transcription.');
+      await _startWakeWordListening();
+      return;
+    }
+
+    state = NovaAgentState.thinking;
+    statusMessage = '> sarvam stt processing...';
+    notifyListeners();
+
+    try {
+      final transcript = await _sarvam.transcribe(
+        apiKey: sarvamApiKey,
+        audioPath: audioPath,
+        languageCode: sarvamLanguage,
+        model: sarvamModel,
+      );
+      liveTranscript = transcript;
+      notifyListeners();
+      await _processTranscript(transcript);
+    } catch (error) {
+      _setError('Sarvam transcription failed: $error');
+      await _startWakeWordListening();
+    }
   }
 
   void _handleSpeechStatus(String status) {
@@ -228,11 +377,16 @@ class NovaProvider extends ChangeNotifier {
   Future<void> _startWakeWordListening() async {
     if (!_speech.isAvailable) return;
 
+    isOnlineActive = await _resolveOnlineMode();
+    await _applyModeDefaults();
+
     _wakeWordEnabled = true;
     _awaitingCommand = false;
     wakeWordListening = true;
     state = NovaAgentState.idle;
-    statusMessage = '> listening for wake word "${NovaConstants.wakeWord}"...';
+    statusMessage = isOnlineActive
+        ? '> online mode :: listening for wake word "${NovaConstants.wakeWord}"...'
+        : '> offline mode :: listening for wake word "${NovaConstants.wakeWord}"...';
     audioLevel = 0;
     notifyListeners();
 
@@ -280,16 +434,28 @@ class NovaProvider extends ChangeNotifier {
       _awaitingCommand = true;
       wakeWordListening = false;
       state = NovaAgentState.listening;
-      statusMessage = '> nova online — awaiting command';
+      statusMessage = isOnlineActive
+          ? '> nova online — awaiting command'
+          : '> nova offline — awaiting command';
       notifyListeners();
       _speech.stopListening();
-      _speech.startListening(
-        onResult: _handleWakeWordResult,
-        onSoundLevel: _updateAudioLevel,
-        listenFor: const Duration(seconds: 12),
-        pauseFor: const Duration(seconds: 3),
-      );
+      _beginCommandCapture();
     }
+  }
+
+  Future<void> _beginCommandCapture() async {
+    if (await _shouldUseSarvam()) {
+      await _startSarvamCapture();
+      return;
+    }
+
+    await _speech.startListening(
+      onResult: _handleWakeWordResult,
+      onSoundLevel: _updateAudioLevel,
+      listenFor: const Duration(seconds: 12),
+      pauseFor: const Duration(seconds: 3),
+      onDevice: true,
+    );
   }
 
   void _updateAudioLevel(double level) {
@@ -299,16 +465,28 @@ class NovaProvider extends ChangeNotifier {
 
   Future<void> _processTranscript(String transcript) async {
     await _speech.stopListening();
+    _sarvamCaptureTimer?.cancel();
     _wakeWordEnabled = false;
     wakeWordListening = false;
     _awaitingCommand = false;
 
     state = NovaAgentState.thinking;
-    statusMessage = '> processing payload...';
+    statusMessage = isOnlineActive
+        ? '> cloud brain processing...'
+        : '> local brain processing...';
     notifyListeners();
 
     try {
-      final result = await _agent.respond(transcript);
+      isOnlineActive = await _resolveOnlineMode();
+      await _applyModeDefaults();
+
+      final result = await _conversation.respond(
+        input: transcript,
+        online: isOnlineActive,
+        workerBaseUrl: cartesiaWorkerUrl,
+        installationId: installationId,
+        language: isOnlineActive ? cartesiaLanguage : 'auto',
+      );
 
       if (result.voiceGenderChange != null &&
           result.voiceGenderChange != voiceGender) {
@@ -332,6 +510,7 @@ class NovaProvider extends ChangeNotifier {
         onComplete: () async {
           await _startWakeWordListening();
         },
+        languageOverride: isOnlineActive ? cartesiaLanguage : null,
       );
     } catch (error) {
       _setError('I encountered an error while processing your request.');
@@ -355,6 +534,7 @@ class NovaProvider extends ChangeNotifier {
   @override
   void dispose() {
     _wakeWordEnabled = false;
+    _sarvamCaptureTimer?.cancel();
     _speech.dispose();
     _tts.dispose();
     super.dispose();

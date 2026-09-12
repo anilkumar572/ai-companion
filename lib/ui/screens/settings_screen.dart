@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/constants.dart';
 import '../../core/theme/nova_theme.dart';
+import '../../models/operation_mode.dart';
 import '../../models/tts_engine.dart';
 import '../../models/voice_gender.dart';
 import '../../providers/nova_provider.dart';
@@ -19,6 +20,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _languageController;
   late final TextEditingController _femaleVoiceController;
   late final TextEditingController _maleVoiceController;
+  late final TextEditingController _sarvamApiKeyController;
+  late final TextEditingController _sarvamLanguageController;
+  late final TextEditingController _localModelPathController;
   double _speed = 1.0;
   bool _initialized = false;
 
@@ -29,6 +33,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _languageController = TextEditingController();
     _femaleVoiceController = TextEditingController();
     _maleVoiceController = TextEditingController();
+    _sarvamApiKeyController = TextEditingController();
+    _sarvamLanguageController = TextEditingController();
+    _localModelPathController = TextEditingController();
   }
 
   @override
@@ -37,6 +44,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _languageController.dispose();
     _femaleVoiceController.dispose();
     _maleVoiceController.dispose();
+    _sarvamApiKeyController.dispose();
+    _sarvamLanguageController.dispose();
+    _localModelPathController.dispose();
     super.dispose();
   }
 
@@ -46,8 +56,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _languageController.text = provider.cartesiaLanguage;
     _femaleVoiceController.text = provider.cartesiaFemaleVoiceId;
     _maleVoiceController.text = provider.cartesiaMaleVoiceId;
+    _sarvamApiKeyController.text = provider.sarvamApiKey;
+    _sarvamLanguageController.text = provider.sarvamLanguage;
+    _localModelPathController.text = provider.localModelPath;
     _speed = provider.cartesiaSpeed;
     _initialized = true;
+  }
+
+  Future<void> _saveSarvamSettings(NovaProvider provider) async {
+    await provider.updateSarvamSettings(
+      apiKey: _sarvamApiKeyController.text,
+      language: _sarvamLanguageController.text,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Sarvam STT settings saved')),
+    );
+  }
+
+  Future<void> _saveOfflineSettings(NovaProvider provider) async {
+    await provider.updateLocalModelPath(_localModelPathController.text);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Offline settings saved')),
+    );
   }
 
   Future<void> _saveCartesiaSettings(NovaProvider provider) async {
@@ -78,6 +112,123 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          Text(
+            'Operation Mode',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: NovaTheme.primary,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            provider.isOnlineActive
+                ? 'Currently online: Sarvam STT, worker chat (Gemini), and Cartesia TTS.'
+                : 'Currently offline: on-device STT, local brain, and device TTS.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: NovaTheme.textMuted,
+                ),
+          ),
+          const SizedBox(height: 16),
+          ...OperationMode.values.map(
+            (mode) => _ModeOptionTile(
+              mode: mode,
+              selected: provider.operationMode == mode,
+              onTap: () => provider.setOperationMode(mode),
+            ),
+          ),
+          const SizedBox(height: 24),
+          _InfoCard(
+            title: 'Online stack',
+            body:
+                'Sarvam STT for speech, buddy-ai-worker /chat for Gemini replies, and Cartesia /tts for voice output.',
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: NovaTheme.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: NovaTheme.textMuted.withValues(alpha: 0.15),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Sarvam STT',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: NovaTheme.accent,
+                      ),
+                ),
+                const SizedBox(height: 16),
+                _SettingsField(
+                  label: 'Sarvam API Key',
+                  controller: _sarvamApiKeyController,
+                  hint: 'Paste your Sarvam api-subscription-key',
+                  obscureText: true,
+                ),
+                const SizedBox(height: 12),
+                _SettingsField(
+                  label: 'Sarvam language_code',
+                  controller: _sarvamLanguageController,
+                  hint: 'unknown, en-IN, hi-IN, te-IN',
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => _saveSarvamSettings(provider),
+                    child: const Text('Save Sarvam Settings'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: NovaTheme.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: NovaTheme.textMuted.withValues(alpha: 0.15),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Offline Local LLM',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: NovaTheme.accent,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Optional GGUF model path for future on-device inference. Without a model, Nova uses the built-in offline companion engine.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: NovaTheme.textMuted,
+                        height: 1.5,
+                      ),
+                ),
+                const SizedBox(height: 16),
+                _SettingsField(
+                  label: 'Local model path (.gguf)',
+                  controller: _localModelPathController,
+                  hint: '/storage/emulated/0/Download/model.gguf',
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => _saveOfflineSettings(provider),
+                    child: const Text('Save Offline Settings'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 28),
           Text(
             'Text-to-Speech Engine',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -161,6 +312,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Nova can place calls, search contacts, take photos, record video, manage reminders, review your calendar, and search the web — all from voice commands.',
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ModeOptionTile extends StatelessWidget {
+  const _ModeOptionTile({
+    required this.mode,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final OperationMode mode;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          decoration: BoxDecoration(
+            color: selected
+                ? NovaTheme.primary.withValues(alpha: 0.12)
+                : NovaTheme.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected
+                  ? NovaTheme.primary
+                  : NovaTheme.textMuted.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                mode == OperationMode.offline
+                    ? Icons.offline_bolt
+                    : mode == OperationMode.online
+                        ? Icons.cloud
+                        : Icons.sync,
+                color: selected ? NovaTheme.primary : NovaTheme.textMuted,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  mode.label,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              if (selected)
+                const Icon(Icons.check_circle, color: NovaTheme.primary),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -322,16 +531,19 @@ class _SettingsField extends StatelessWidget {
     required this.label,
     required this.controller,
     required this.hint,
+    this.obscureText = false,
   });
 
   final String label;
   final TextEditingController controller;
   final String hint;
+  final bool obscureText;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
+      obscureText: obscureText,
       style: Theme.of(context).textTheme.bodyMedium,
       decoration: InputDecoration(
         labelText: label,
