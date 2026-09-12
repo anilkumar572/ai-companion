@@ -114,20 +114,16 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> setVoiceGender(VoiceGender gender) async {
+    await _speech.shutdown();
     if (voiceGender == gender) {
-      await _releaseMicAndPreview(gender);
+      await _tts.setGender(gender, preview: true);
       return;
     }
 
     voiceGender = gender;
     await _prefs.setString(NovaConstants.prefsVoiceGender, gender.storageKey);
-    await _releaseMicAndPreview(gender);
-    notifyListeners();
-  }
-
-  Future<void> _releaseMicAndPreview(VoiceGender gender) async {
-    await _speech.releaseMicrophone();
     await _tts.setGender(gender, preview: true);
+    notifyListeners();
   }
 
   Future<void> startListening() async {
@@ -137,29 +133,28 @@ class NovaProvider extends ChangeNotifier {
       return;
     }
 
-    await _speech.releaseMicrophone();
+    await _speech.shutdown();
     errorMessage = null;
     liveTranscript = '';
     audioLevel = 0;
 
-    await _startCommandListening(
-      statusMessage: 'Listening… tap the orb when done',
-    );
+    await _startCommandListening();
   }
 
   Future<void> stopListening() async {
     if (state != NovaAgentState.listening) {
-      await _speech.releaseMicrophone();
+      await _speech.shutdown();
+      audioLevel = 0;
       return;
     }
 
     _commandCaptureActive = false;
     final transcript = liveTranscript.trim();
-    await _speech.releaseMicrophone();
+    await _speech.shutdown();
     audioLevel = 0;
 
     if (transcript.isNotEmpty) {
-      await _processTranscript(transcript);
+      await _beginProcessing(transcript);
       return;
     }
 
@@ -171,65 +166,53 @@ class NovaProvider extends ChangeNotifier {
     await _enterIdle();
   }
 
-  /// Release mic when app goes to background or user leaves the screen.
   Future<void> releaseMicrophone() async {
-    if (state == NovaAgentState.listening) {
-      _commandCaptureActive = false;
-      await _speech.releaseMicrophone();
-      audioLevel = 0;
-      await _enterIdle();
-      return;
-    }
-
-    await _speech.releaseMicrophone();
+    _commandCaptureActive = false;
+    await _speech.shutdown();
     audioLevel = 0;
+
+    if (state == NovaAgentState.listening) {
+      await _enterIdle();
+    }
   }
 
-  Future<void> _startCommandListening({
-    required String statusMessage,
-  }) async {
+  Future<void> _startCommandListening() async {
     _commandCaptureActive = true;
     state = NovaAgentState.listening;
-    this.statusMessage = statusMessage;
+    statusMessage = 'Listening… tap the orb when done';
     notifyListeners();
 
     try {
       await _speech.startListening(
         onResult: (transcript, isFinal) {
+          if (!_commandCaptureActive || _processingTranscript) return;
+
           liveTranscript = transcript;
           notifyListeners();
 
-          if (!isFinal || transcript.trim().isEmpty || _processingTranscript) {
-            return;
-          }
+          if (!isFinal || transcript.trim().isEmpty) return;
 
           _commandCaptureActive = false;
-          unawaited(_finalizeCapture(transcript.trim()));
+          unawaited(_beginProcessing(transcript.trim()));
         },
         onSoundLevel: _updateAudioLevel,
         localeId: _speechLocaleId,
-        listenFor: const Duration(seconds: 30),
+        listenFor: const Duration(seconds: 12),
         pauseFor: const Duration(seconds: 2),
         onDevice: true,
       );
-    } catch (error) {
+    } catch (_) {
       _commandCaptureActive = false;
       _setRecoverableError('Could not start listening. Tap the orb to try again.');
     }
   }
 
-  Future<void> _finalizeCapture(String transcript) async {
-    await _speech.releaseMicrophone();
-    audioLevel = 0;
-    await _processTranscript(transcript);
-  }
-
-  String get _speechLocaleId =>
-      preferredLanguage.replaceAll('-', '_');
+  String get _speechLocaleId => preferredLanguage.replaceAll('-', '_');
 
   void _handleSpeechError(String message) {
-    if (state != NovaAgentState.listening) return;
+    if (state != NovaAgentState.listening || _processingTranscript) return;
     _commandCaptureActive = false;
+    unawaited(_speech.shutdown());
     _setRecoverableError(
       message.isEmpty
           ? 'Speech recognition failed. Tap the orb to try again.'
@@ -239,47 +222,27 @@ class NovaProvider extends ChangeNotifier {
 
   void _handleSpeechStatus(String status) {
     if (status != 'done' && status != 'notListening') return;
-    if (_speech.isListening) return;
+    if (_speech.isListening || _processingTranscript) return;
     if (!_commandCaptureActive || state != NovaAgentState.listening) return;
-    if (_processingTranscript) return;
 
     _commandCaptureActive = false;
     final transcript = liveTranscript.trim();
 
     if (transcript.isNotEmpty) {
-      unawaited(_finalizeCapture(transcript));
+      unawaited(_beginProcessing(transcript));
       return;
     }
 
     unawaited(_enterIdle());
   }
 
-  Future<void> _enterIdle({bool clearError = true}) async {
-    await _speech.releaseMicrophone();
-    _processingTranscript = false;
-    _commandCaptureActive = false;
-    if (clearError) {
-      errorMessage = null;
-    }
-    audioLevel = 0;
-    liveTranscript = '';
-    state = NovaAgentState.idle;
-    statusMessage = errorMessage ?? 'Tap the orb to speak';
-    notifyListeners();
-  }
-
-  void _updateAudioLevel(double level) {
-    if (state != NovaAgentState.listening) return;
-    audioLevel = level.clamp(0.0, 1.0);
-    notifyListeners();
-  }
-
-  Future<void> _processTranscript(String transcript) async {
+  Future<void> _beginProcessing(String transcript) async {
     if (_processingTranscript) return;
     _processingTranscript = true;
     _commandCaptureActive = false;
 
-    await _speech.releaseMicrophone();
+    // Stop mic FIRST so TTS can take audio focus.
+    await _speech.shutdown();
     audioLevel = 0;
     errorMessage = null;
     liveTranscript = transcript;
@@ -313,17 +276,37 @@ class NovaProvider extends ChangeNotifier {
       statusMessage = 'Speaking…';
       notifyListeners();
 
+      // Mic is already off — safe to play voice reply.
       await _tts.speak(
         result.message,
         onComplete: () async {
+          _processingTranscript = false;
           await _enterIdle();
         },
         languageOverride: preferredLanguage,
       );
-    } catch (error) {
+    } catch (_) {
       _processingTranscript = false;
       _setRecoverableError('Voice playback failed. Tap the orb to try again.');
     }
+  }
+
+  Future<void> _enterIdle() async {
+    await _speech.shutdown();
+    _processingTranscript = false;
+    _commandCaptureActive = false;
+    errorMessage = null;
+    audioLevel = 0;
+    liveTranscript = '';
+    state = NovaAgentState.idle;
+    statusMessage = 'Tap the orb to speak';
+    notifyListeners();
+  }
+
+  void _updateAudioLevel(double level) {
+    if (state != NovaAgentState.listening || !_commandCaptureActive) return;
+    audioLevel = level.clamp(0.0, 1.0);
+    notifyListeners();
   }
 
   Future<bool> _requestMicPermission() async {
@@ -338,7 +321,7 @@ class NovaProvider extends ChangeNotifier {
     _processingTranscript = false;
     _commandCaptureActive = false;
     audioLevel = 0;
-    unawaited(_speech.releaseMicrophone());
+    unawaited(_speech.shutdown());
     notifyListeners();
   }
 
