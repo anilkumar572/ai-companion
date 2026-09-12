@@ -96,7 +96,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: 'Cloud backend',
             body:
                 'Worker: ${NovaConstants.workerUrl}\n'
-                'STT: wss://.../stt/ws (Sarvam stream)\n'
+                'STT: POST /stt (Sarvam REST, recommended)\n'
                 'Chat: POST /chat (Gemini)\n'
                 'TTS: POST /tts (Cartesia)\n\n'
                 'Set GOOGLE_AI_API_KEY, SARVAM_API_KEY, and CARTESIA_API_KEY as Cloudflare Worker secrets. The app stores no API keys.',
@@ -220,7 +220,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _InfoCard(
             title: 'Change Sarvam language (worker)',
             body:
-                'Set SARVAM_LANGUAGE_CODE on the worker (e.g. unknown, hi-IN, te-IN). The app connects to /stt/ws and the worker proxies Sarvam streaming STT.',
+                'Set SARVAM_LANGUAGE_CODE on the worker (e.g. unknown, hi-IN, te-IN). The app records audio and sends it to POST /stt; the worker proxies Sarvam REST STT.',
           ),
         ],
       ),

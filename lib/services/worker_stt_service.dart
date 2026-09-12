@@ -17,6 +17,27 @@ class WorkerSttService {
 
   bool get isCapturing => _capturing;
 
+  static Future<bool> workerSupportsRestStt(String workerBaseUrl) async {
+    try {
+      final base = workerBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+      final response = await http
+          .get(Uri.parse('$base/health'))
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        return false;
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final features = (data['features'] as List?)
+              ?.map((feature) => feature.toString())
+              .toList() ??
+          const <String>[];
+      return features.contains('stt');
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> startCapture() async {
     if (!await _recorder.hasPermission()) {
       throw StateError('Microphone permission is required for recording.');
@@ -75,8 +96,15 @@ class WorkerSttService {
         .timeout(const Duration(seconds: 45));
 
     if (response.statusCode != 200) {
+      final message = _extractError(response);
+      if (response.statusCode == 404) {
+        throw WorkerSttException(
+          'Worker is missing POST /stt. Redeploy the Cloudflare worker (cd worker && npx wrangler deploy).',
+          statusCode: response.statusCode,
+        );
+      }
       throw WorkerSttException(
-        _extractError(response),
+        message,
         statusCode: response.statusCode,
       );
     }

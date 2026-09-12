@@ -88,6 +88,7 @@ class NovaProvider extends ChangeNotifier {
   bool _awaitingCommand = false;
   bool _restartingWakeWord = false;
   bool _processingWorkerStt = false;
+  bool _speechFallbackActive = false;
   Timer? _sttCaptureTimer;
 
   Future<void> bootstrap() async {
@@ -264,7 +265,16 @@ class NovaProvider extends ChangeNotifier {
 
   Future<void> _startWorkerSttCapture() async {
     _sttCaptureTimer?.cancel();
+    _speechFallbackActive = false;
     await _speech.stopListening();
+
+    final supportsRestStt = await WorkerSttService.workerSupportsRestStt(workerUrl);
+    if (!supportsRestStt) {
+      await _handleOnlineSttFailure(
+        'Worker is missing POST /stt. Redeploy: cd worker && npx wrangler deploy',
+      );
+      return;
+    }
 
     state = NovaAgentState.listening;
     statusMessage = '> sarvam capture active — speak now';
@@ -294,6 +304,7 @@ class NovaProvider extends ChangeNotifier {
       return;
     }
 
+    _processingWorkerStt = true;
     state = NovaAgentState.thinking;
     statusMessage = '> sarvam stt processing...';
     notifyListeners();
@@ -306,17 +317,22 @@ class NovaProvider extends ChangeNotifier {
       );
       liveTranscript = transcript;
       notifyListeners();
-      _processingWorkerStt = true;
       await _processTranscript(transcript);
     } catch (error) {
+      _processingWorkerStt = false;
       await _handleOnlineSttFailure('Sarvam STT failed: $error');
     }
   }
 
   Future<void> _handleOnlineSttFailure(String message) async {
+    _sttCaptureTimer?.cancel();
     await _workerStt.stopCapture();
+    await _speech.stopListening();
     _processingWorkerStt = false;
+    _speechFallbackActive = true;
+    state = NovaAgentState.listening;
     statusMessage = '> stt fallback :: using device speech';
+    errorMessage = message;
     notifyListeners();
 
     try {
@@ -325,7 +341,9 @@ class NovaProvider extends ChangeNotifier {
           liveTranscript = transcript;
           notifyListeners();
           if (isFinal && transcript.trim().isNotEmpty) {
-            _processTranscript(transcript);
+            _speechFallbackActive = false;
+            errorMessage = null;
+            unawaited(_processTranscript(transcript));
           }
         },
         onSoundLevel: _updateAudioLevel,
@@ -334,19 +352,29 @@ class NovaProvider extends ChangeNotifier {
         onDevice: true,
       );
     } catch (_) {
+      _speechFallbackActive = false;
       _setRecoverableError(message);
       await _startWakeWordListening();
     }
   }
 
   void _handleSpeechStatus(String status) {
+    if (status != 'done' && status != 'notListening') return;
+    if (_speech.isListening) return;
+
+    if (_speechFallbackActive && state == NovaAgentState.listening) {
+      _speechFallbackActive = false;
+      errorMessage = null;
+      liveTranscript = '';
+      unawaited(_startWakeWordListening());
+      return;
+    }
+
     if (!_wakeWordEnabled || _restartingWakeWord) return;
     if (state != NovaAgentState.idle) return;
 
-    if (status == 'done' || status == 'notListening') {
-      if (wakeWordListening && !_speech.isListening) {
-        _restartWakeWordSession();
-      }
+    if (wakeWordListening) {
+      _restartWakeWordSession();
     }
   }
 
@@ -369,6 +397,8 @@ class NovaProvider extends ChangeNotifier {
     isOnlineActive = await _resolveOnlineMode();
     await _applyModeDefaults();
     _processingWorkerStt = false;
+    _speechFallbackActive = false;
+    errorMessage = null;
 
     _wakeWordEnabled = true;
     _awaitingCommand = false;
@@ -459,9 +489,11 @@ class NovaProvider extends ChangeNotifier {
     _sttCaptureTimer?.cancel();
     await _speech.stopListening();
     await _workerStt.stopCapture();
+    _speechFallbackActive = false;
     _wakeWordEnabled = false;
     wakeWordListening = false;
     _awaitingCommand = false;
+    errorMessage = null;
 
     state = NovaAgentState.thinking;
     statusMessage = isOnlineActive
