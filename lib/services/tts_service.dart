@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -15,13 +16,13 @@ class TtsService {
   TtsService({
     SharedPreferences? prefs,
     CartesiaTtsService? cartesia,
-    AudioPlayer? audioPlayer,
+    FlutterTts? deviceTts,
   })  : _prefs = prefs,
         _cartesia = cartesia ?? const CartesiaTtsService(),
-        _audioPlayer = audioPlayer ?? AudioPlayer();
+        _deviceTts = deviceTts ?? FlutterTts();
 
   final CartesiaTtsService _cartesia;
-  final AudioPlayer _audioPlayer;
+  final FlutterTts _deviceTts;
   final SharedPreferences? _prefs;
 
   VoiceGender _gender = VoiceGender.female;
@@ -43,32 +44,16 @@ class TtsService {
 
   Future<void> initialize({VoiceGender gender = VoiceGender.female}) async {
     _gender = gender;
-    await _configurePlaybackAudio();
-    await _audioPlayer.setPlayerMode(PlayerMode.mediaPlayer);
-    await _audioPlayer.setReleaseMode(ReleaseMode.stop);
-    await _audioPlayer.setVolume(1.0);
+    await _configureDeviceTts();
     _initialized = true;
   }
 
-  Future<void> _configurePlaybackAudio() async {
-    await AudioPlayer.global.setAudioContext(
-      AudioContext(
-        android: AudioContextAndroid(
-          isSpeakerphoneOn: true,
-          stayAwake: false,
-          contentType: AndroidContentType.speech,
-          usageType: AndroidUsageType.media,
-          audioFocus: AndroidAudioFocus.gain,
-        ),
-        iOS: AudioContextIOS(
-          category: AVAudioSessionCategory.playback,
-          options: {
-            AVAudioSessionOptions.duckOthers,
-            AVAudioSessionOptions.defaultToSpeaker,
-          },
-        ),
-      ),
-    );
+  Future<void> _configureDeviceTts() async {
+    await _deviceTts.setVolume(1.0);
+    await _deviceTts.setSpeechRate(0.48);
+    await _deviceTts.setPitch(_gender == VoiceGender.male ? 0.85 : 1.0);
+    await _deviceTts.awaitSpeakCompletion(true);
+    await _setDeviceLanguage(preferredLanguage);
   }
 
   Future<void> setPreferredLanguage(String language) async {
@@ -76,12 +61,15 @@ class TtsService {
       NovaConstants.prefsPreferredLanguage,
       language.trim(),
     );
+    await _setDeviceLanguage(language);
   }
 
   Future<void> setGender(VoiceGender gender, {bool preview = false}) async {
     _gender = gender;
     if (!_initialized) {
       await initialize(gender: gender);
+    } else {
+      await _deviceTts.setPitch(gender == VoiceGender.male ? 0.85 : 1.0);
     }
     if (preview) {
       await speak(_previewText());
@@ -104,66 +92,134 @@ class TtsService {
       return;
     }
 
-    await stop();
-    await _configurePlaybackAudio();
+    await Future<void>.delayed(const Duration(milliseconds: 900));
 
-    final audio = await _cartesia.synthesize(
-      workerBaseUrl: workerUrl,
-      installationId: installationId,
-      text: prepared,
-      language: languageOverride ?? preferredLanguage,
-      gender: _gender.storageKey,
-    );
-
-    final source = await _buildPlaybackSource(audio);
-    final completer = Completer<void>();
-
-    final completeSub = _audioPlayer.onPlayerComplete.listen((_) {
-      if (!completer.isCompleted) completer.complete();
-    });
-    final stateSub = _audioPlayer.onPlayerStateChanged.listen((playerState) {
-      if (playerState == PlayerState.completed && !completer.isCompleted) {
-        completer.complete();
-      }
-    });
+    final language = languageOverride ?? preferredLanguage;
+    Uint8List? audio;
 
     try {
-      onStart?.call();
-      await _audioPlayer.play(source);
-      await completer.future.timeout(
-        const Duration(seconds: 120),
-        onTimeout: () => throw TimeoutException('Voice playback timed out'),
+      audio = await _cartesia.synthesize(
+        workerBaseUrl: workerUrl,
+        installationId: installationId,
+        text: prepared,
+        language: language,
+        gender: _gender.storageKey,
       );
+    } on CartesiaTtsException {
+      onStart?.call();
+      await _speakWithDeviceTts(prepared, language);
+      onComplete?.call();
+      return;
+    }
+
+    onStart?.call();
+
+    final tempPath = await _writeTempWav(audio);
+    try {
+      final playedOnlineVoice = await _playCartesiaFile(tempPath);
+      if (!playedOnlineVoice) {
+        await _speakWithDeviceTts(prepared, language);
+      }
       onComplete?.call();
     } finally {
-      await completeSub.cancel();
-      await stateSub.cancel();
-      if (source is DeviceFileSource && source.path.isNotEmpty) {
-        unawaited(File(source.path).delete());
-      }
+      unawaited(File(tempPath).delete());
     }
   }
 
-  Future<Source> _buildPlaybackSource(Uint8List audio) async {
-    if (kIsWeb) {
-      return BytesSource(audio, mimeType: 'audio/wav');
-    }
+  Future<bool> _playCartesiaFile(String path) async {
+    final player = AudioPlayer();
+    try {
+      await player.setFilePath(path);
+      await player.setVolume(1.0);
 
+      if (player.duration == null || player.duration == Duration.zero) {
+        await player.load();
+      }
+
+      final totalDuration = player.duration;
+      if (totalDuration == null || totalDuration == Duration.zero) {
+        return false;
+      }
+
+      await player.play();
+      if (!await _waitUntilAudible(player)) {
+        await player.stop();
+        return false;
+      }
+
+      await player.processingStateStream.firstWhere(
+        (state) => state == ProcessingState.completed,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      try {
+        await player.stop();
+      } catch (_) {}
+      try {
+        await player.dispose();
+      } catch (_) {}
+    }
+  }
+
+  Future<bool> _waitUntilAudible(AudioPlayer player) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 4));
+    while (DateTime.now().isBefore(deadline)) {
+      if (player.playing) {
+        final position = player.position;
+        if (position > const Duration(milliseconds: 80)) {
+          return true;
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    return player.playing;
+  }
+
+  Future<void> _speakWithDeviceTts(String text, String language) async {
+    await _setDeviceLanguage(language);
+    await _deviceTts.setPitch(_gender == VoiceGender.male ? 0.85 : 1.0);
+    await _deviceTts.stop();
+    final result = await _deviceTts.speak(text);
+    if (result != 1) {
+      throw TtsPlaybackException('Device voice playback failed.');
+    }
+  }
+
+  Future<void> _setDeviceLanguage(String language) async {
+    final normalized = language.replaceAll('_', '-');
+    final locales = await _deviceTts.getLanguages;
+    if (locales is List) {
+      for (final locale in locales) {
+        if (locale is String &&
+            locale.toLowerCase() == normalized.toLowerCase()) {
+          await _deviceTts.setLanguage(locale);
+          return;
+        }
+      }
+    }
+    await _deviceTts.setLanguage(normalized);
+  }
+
+  Future<String> _writeTempWav(Uint8List audio) async {
     final directory = await getTemporaryDirectory();
     final path =
         '${directory.path}/nova_tts_${DateTime.now().millisecondsSinceEpoch}.wav';
     final file = File(path);
     await file.writeAsBytes(audio, flush: true);
-    return DeviceFileSource(path);
+    if (!await file.exists() || await file.length() < 44) {
+      throw TtsPlaybackException('Voice audio file could not be prepared.');
+    }
+    return path;
   }
 
   Future<void> stop() async {
-    await _audioPlayer.stop();
+    await _deviceTts.stop();
   }
 
   Future<void> dispose() async {
-    await stop();
-    await _audioPlayer.dispose();
+    await _deviceTts.stop();
   }
 
   String _previewText() {
@@ -180,6 +236,16 @@ class TtsService {
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
+}
+
+class TtsPlaybackException implements Exception {
+  TtsPlaybackException(this.message, {this.cause});
+
+  final String message;
+  final Object? cause;
+
+  @override
+  String toString() => message;
 }
 
 typedef VoidCallback = void Function();

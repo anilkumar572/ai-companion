@@ -37,6 +37,11 @@ class NovaAgent {
     bool allowWebSearch = true,
     bool allowCloudDeferral = false,
   }) async {
+    final rawNormalized = input.trim().toLowerCase();
+    if (_isPureGreeting(rawNormalized)) {
+      return AgentResult(message: _greeting());
+    }
+
     final text = _cleanInput(input);
     if (text.isEmpty) {
       return const AgentResult(
@@ -53,17 +58,6 @@ class NovaAgent {
         message: voiceChange.message,
         voiceGenderChange: voiceChange.gender,
       );
-    }
-
-    if (_containsAny(normalized, [
-      'hello',
-      'hi nova',
-      'hey nova',
-      'good morning',
-      'good afternoon',
-      'good evening',
-    ])) {
-      return AgentResult(message: _greeting());
     }
 
     if (_containsAny(normalized, [
@@ -389,20 +383,24 @@ class NovaAgent {
   }
 
   String _cleanInput(String input) {
-    final trimmed = input.trim();
-    final greetingOnly = RegExp(
-      r'^\s*(hey|hi|hello)\s+n[o0]va\s*[.!]?\s*$',
-      caseSensitive: false,
+    var text = input.trim();
+    text = text.replaceFirst(
+      RegExp(r'^\s*(hey|hi|hello)\s+n[o0]va[,.!\s]*', caseSensitive: false),
+      '',
     );
-    if (greetingOnly.hasMatch(trimmed)) {
-      return 'hello';
-    }
-
-    var text = trimmed.replaceFirst(
+    text = text.replaceFirst(
       RegExp(r'^\s*n[o0]va[,.!\s]+', caseSensitive: false),
       '',
     );
     return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  bool _isPureGreeting(String normalized) {
+    if (normalized.isEmpty) return true;
+    return RegExp(
+      r'^(hi|hello|hey|good morning|good afternoon|good evening)(\s+n[o0]va)?[!.]?\s*$',
+      caseSensitive: false,
+    ).hasMatch(normalized);
   }
 
   _VoiceChange? _detectVoiceChange(String normalized) {
