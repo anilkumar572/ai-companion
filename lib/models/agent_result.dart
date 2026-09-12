@@ -7,6 +7,7 @@ class AgentResult {
     this.mediaPath,
     this.isVideo = false,
     this.deferToCloud = false,
+    this.speakLanguage,
   });
 
   final String message;
@@ -14,6 +15,7 @@ class AgentResult {
   final String? mediaPath;
   final bool isVideo;
   final bool deferToCloud;
+  final String? speakLanguage;
 
   static const cloudDeferral = AgentResult(
     message: '',

@@ -3,7 +3,7 @@ main = "src/index.js"
 compatibility_date = "2025-10-01"
 
 [vars]
-GOOGLE_AI_MODEL = "gemini-3.5-flash-lite"
+GOOGLE_AI_MODEL = "gemini-2.0-flash"
 CARTESIA_MODEL = "sonic-3.6"
 CARTESIA_VERSION = "2026-08-14"
 CARTESIA_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"

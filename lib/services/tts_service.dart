@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import '../core/constants.dart';
 import '../models/voice_gender.dart';
+import '../utils/speech_text.dart';
 import 'cartesia_tts_service.dart';
 
 class TtsService {
@@ -222,14 +223,7 @@ class TtsService {
         : 'Female voice profile activated.';
   }
 
-  String _prepareSpeechText(String text) {
-    return text
-        .replaceAll('\n', '. ')
-        .replaceAll(RegExp(r'[\u{1F300}-\u{1FAFF}]', unicode: true), '')
-        .replaceAll(RegExp(r'[\u{2600}-\u{27BF}]', unicode: true), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-  }
+  String _prepareSpeechText(String text) => normalizeForSpeech(text);
 }
 
 class TtsPlaybackException implements Exception {

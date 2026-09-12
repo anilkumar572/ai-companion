@@ -391,7 +391,7 @@ class NovaProvider extends ChangeNotifier {
           _processingTranscript = false;
           await _enterIdle();
         },
-        languageOverride: preferredLanguage,
+        languageOverride: result.speakLanguage ?? preferredLanguage,
       );
     } catch (error) {
       _processingTranscript = false;

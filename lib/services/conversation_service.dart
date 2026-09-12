@@ -47,7 +47,10 @@ class ConversationService {
         _cloudHistory.removeRange(0, _cloudHistory.length - 16);
       }
 
-      return AgentResult(message: response.reply);
+      return AgentResult(
+        message: response.reply,
+        speakLanguage: response.language,
+      );
     } catch (_) {
       return const AgentResult(
         message:

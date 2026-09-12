@@ -372,15 +372,21 @@ async function handleChat(request, env) {
 }
 
 function buildSystemPrompt({ robotName, personality, traits, language, memoryNotes, searchNotes }) {
-  return `You are ${robotName}, a formal AI voice companion (not human). Warm, precise, concise, expressive.
+  return `You are ${robotName}, a warm and helpful voice companion (not human).
 Personality: ${personality}. Traits: ${JSON.stringify(traits)}.
 
-LANGUAGE: Reply in the user's language/code-mix (en/hi/te/ta/kn/ml/mr/bn/gu/pa/or). Never announce detection.
+LANGUAGE: Reply in the user's language (en/hi/te/ta/kn/ml/mr/bn/gu/pa/or). Match their language naturally. Never announce language detection.
 
-REPLY RULES:
-- "reply" is spoken aloud. Write natural speech only.
-- Never put beep/boop/whirr/buzz/SFX words, emotion labels, or JSON keys in "reply".
-- Put robot SFX only in "sound" (cute|happy|shy|think|error|none). Put mood only in "emotion".
+VOICE / TTS RULES (critical — "reply" is read aloud by text-to-speech):
+- Write 1 to 3 short, complete sentences with correct grammar.
+- Use natural spoken phrasing, not written essay style.
+- Use periods and commas for clear pauses. End with proper punctuation.
+- No bullet points, numbered lists, markdown, symbols, URLs, or JSON in "reply".
+- No emojis, asterisks, hashtags, or parenthetical stage directions.
+- No semicolons, colons introducing lists, or long run-on sentences.
+- Prefer simple everyday words over jargon or overly formal phrasing.
+- Never put beep/boop/whirr/buzz/SFX words or emotion labels in "reply".
+- Put robot SFX only in "sound". Put mood only in "emotion".
 
 ${memoryNotes.length ? `Memory:\n- ${memoryNotes.join("\n- ")}` : ""}
 ${searchNotes ? `Current info:\n${searchNotes}` : ""}
@@ -435,8 +441,8 @@ async function callGemini(env, messages, apiKey) {
   const body = {
     contents,
     generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 400,
+      temperature: 0.55,
+      maxOutputTokens: 512,
       responseMimeType: "application/json",
     },
   };
@@ -597,6 +603,38 @@ function sanitizeResponse(input) {
   };
 }
 
+function normalizeForSpeech(text) {
+  let out = String(text || "").trim();
+  if (!out) return "";
+
+  out = out.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  out = out.replace(/\*\*([^*]+)\*\*/g, "$1");
+  out = out.replace(/\*([^*]+)\*/g, "$1");
+  out = out.replace(/__([^_]+)__/g, "$1");
+  out = out.replace(/_([^_]+)_/g, "$1");
+  out = out.replace(/`([^`]+)`/g, "$1");
+  out = out.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  out = out.replace(/https?:\/\/\S+/gi, "");
+  out = out.replace(/^[-*•]\s+/gm, "");
+  out = out.replace(/^\d+[.)]\s+/gm, "");
+  out = out.replace(/[\u{1F300}-\u{1FAFF}]/gu, "");
+  out = out.replace(/[\u{2600}-\u{27BF}]/gu, "");
+  out = out.replace(/\n+/g, ", ");
+  out = out.replace(/\s*([,.!?;:])\s*/g, "$1 ");
+  out = out.replace(/,{2,}/g, ",");
+  out = out.replace(/\.{2,}/g, ".");
+  out = out.replace(/\.\s*\./g, ".");
+  out = out.replace(/,\s*\./g, ".");
+  out = out.replace(/;\s*/g, ", ");
+  out = out.replace(/\s{2,}/g, " ");
+  out = out.trim();
+
+  if (out && !/[.!?]$/.test(out)) {
+    out = `${out}.`;
+  }
+  return out;
+}
+
 function cleanSpeakableReply(raw) {
   let text = String(raw || "").trim();
   if (!text) return "Hmm, I got confused for a second. Say that again?";
@@ -607,8 +645,8 @@ function cleanSpeakableReply(raw) {
       if (unwrapped?.reply) text = String(unwrapped.reply).trim();
     }
   }
-  text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   text = stripRobotFiller(text);
+  text = normalizeForSpeech(text);
   if (!text || text.startsWith("{") || text.startsWith("[")) {
     return "Hmm, I got confused for a second. Say that again?";
   }
@@ -710,7 +748,7 @@ async function handleTts(request, env) {
   const gender = String(body.gender || body.voiceGender || "female").toLowerCase();
   const voiceId = pickCartesiaVoiceId(env, gender, body.voiceId);
   const modelId = env.CARTESIA_MODEL || "sonic-3.6";
-  const speed = clampNumber(Number(body.speed ?? env.CARTESIA_SPEED ?? 1), 0.6, 1.5, 1);
+  const speed = clampNumber(Number(body.speed ?? env.CARTESIA_SPEED ?? 0.95), 0.6, 1.5, 0.95);
 
   const cartesiaBody = {
     model_id: modelId,
@@ -774,11 +812,7 @@ function stripForSpeech(text) {
   if (cleaned.startsWith("{") || cleaned.startsWith("[")) {
     cleaned = cleanSpeakableReply(cleaned);
   }
-  return cleaned
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
-    .replace(/[\u{2600}-\u{27BF}]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeForSpeech(cleaned);
 }
 
 function clampNumber(value, min, max, fallback) {

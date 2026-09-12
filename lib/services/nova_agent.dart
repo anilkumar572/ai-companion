@@ -280,9 +280,9 @@ class NovaAgent {
 
       final lines = matches
           .take(5)
-          .map((match) => '${match.displayName} — ${match.phoneNumber}')
-          .join('\n');
-      return AgentResult(message: 'Matching contacts:\n$lines');
+          .map((match) => '${match.displayName}, ${match.phoneNumber}')
+          .join('. Next, ');
+      return AgentResult(message: 'Matching contacts: $lines.');
     } on ContactsPermissionException {
       return const AgentResult(
         message: 'Contacts permission is required to search your contacts.',
@@ -522,9 +522,9 @@ class NovaAgent {
 
     final formatter = DateFormat('MMM d, h:mm a');
     final lines = items
-        .map((item) => '${formatter.format(item.scheduledAt)} — ${item.title}')
-        .join('\n');
-    return 'Your upcoming reminders are:\n$lines';
+        .map((item) => '${formatter.format(item.scheduledAt)}, ${item.title}')
+        .join('. Next, ');
+    return 'Your upcoming reminders are: $lines.';
   }
 
   Future<String> _handleReminder(String text) async {
