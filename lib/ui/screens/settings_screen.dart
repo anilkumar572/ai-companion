@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/constants.dart';
 import '../../core/theme/nova_theme.dart';
 import '../../models/voice_gender.dart';
 import '../../providers/nova_provider.dart';
@@ -68,7 +69,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Nova will chat and speak in this language.',
+                  '${NovaConstants.appName} will chat and speak in this language.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: NovaTheme.textMuted,
                       ),
@@ -91,20 +92,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 28),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-            decoration: NovaTheme.glassCard(borderColor: NovaTheme.secondary),
-            child: SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Wake word "Nova"'),
-              subtitle: const Text(
-                'Listen continuously and start when you say Nova.',
-              ),
-              value: provider.wakeWordEnabled,
-              onChanged: provider.setWakeWordEnabled,
-            ),
-          ),
-          const SizedBox(height: 28),
           Text(
             'Voice',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -113,7 +100,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Choose how Nova sounds.',
+            'Choose how ${NovaConstants.appName} sounds.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: NovaTheme.textMuted,
                 ),

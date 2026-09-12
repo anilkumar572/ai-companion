@@ -11,13 +11,13 @@ class NovaOrb extends StatefulWidget {
     required this.state,
     required this.audioLevel,
     required this.onTap,
-    this.wakeWordListening = false,
+    this.enabled = true,
   });
 
   final NovaAgentState state;
   final double audioLevel;
   final VoidCallback onTap;
-  final bool wakeWordListening;
+  final bool enabled;
 
   @override
   State<NovaOrb> createState() => _NovaOrbState();
@@ -55,7 +55,7 @@ class _NovaOrbState extends State<NovaOrb> with TickerProviderStateMixin {
 
   void _updateSpeed() {
     final speed = switch (widget.state) {
-      NovaAgentState.idle => widget.wakeWordListening ? 1.4 : 0.9,
+      NovaAgentState.idle => 0.9,
       NovaAgentState.listening => 1.8,
       NovaAgentState.thinking => 2.4,
       NovaAgentState.speaking => 1.5,
@@ -80,8 +80,10 @@ class _NovaOrbState extends State<NovaOrb> with TickerProviderStateMixin {
     _updateSpeed();
 
     return GestureDetector(
-      onTap: widget.onTap,
-      child: SizedBox(
+      onTap: widget.enabled ? widget.onTap : null,
+      child: Opacity(
+        opacity: widget.enabled ? 1 : 0.55,
+        child: SizedBox(
         width: 320,
         height: 320,
         child: AnimatedBuilder(
@@ -98,11 +100,11 @@ class _NovaOrbState extends State<NovaOrb> with TickerProviderStateMixin {
                 rotation: _ringController.value,
                 scan: _scanController.value,
                 audioLevel: widget.audioLevel,
-                wakeWordListening: widget.wakeWordListening,
               ),
             );
           },
         ),
+      ),
       ),
     );
   }
@@ -115,7 +117,6 @@ class _NovaOrbPainter extends CustomPainter {
     required this.rotation,
     required this.scan,
     required this.audioLevel,
-    required this.wakeWordListening,
   });
 
   final NovaAgentState state;
@@ -123,7 +124,6 @@ class _NovaOrbPainter extends CustomPainter {
   final double rotation;
   final double scan;
   final double audioLevel;
-  final bool wakeWordListening;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -214,9 +214,7 @@ class _NovaOrbPainter extends CustomPainter {
   }
 
   void _drawScanner(Canvas canvas, Offset center, double radius, Color color) {
-    if (state != NovaAgentState.thinking &&
-        state != NovaAgentState.listening &&
-        !(state == NovaAgentState.idle && wakeWordListening)) {
+    if (state != NovaAgentState.thinking && state != NovaAgentState.listening) {
       return;
     }
 
@@ -238,10 +236,10 @@ class _NovaOrbPainter extends CustomPainter {
 
   _OrbPalette _paletteForState(NovaAgentState state) {
     return switch (state) {
-      NovaAgentState.idle => _OrbPalette(
-          core: const Color(0xFF151528),
-          coreHighlight: wakeWordListening ? NovaTheme.accent : NovaTheme.primary,
-          coreShadow: const Color(0xFF07070F),
+      NovaAgentState.idle => const _OrbPalette(
+          core: Color(0xFF151528),
+          coreHighlight: NovaTheme.primary,
+          coreShadow: Color(0xFF07070F),
           ring: NovaTheme.primary,
           glow: NovaTheme.primary,
           accent: NovaTheme.secondary,
@@ -287,8 +285,7 @@ class _NovaOrbPainter extends CustomPainter {
         oldDelegate.pulse != pulse ||
         oldDelegate.rotation != rotation ||
         oldDelegate.scan != scan ||
-        oldDelegate.audioLevel != audioLevel ||
-        oldDelegate.wakeWordListening != wakeWordListening;
+        oldDelegate.audioLevel != audioLevel;
   }
 }
 

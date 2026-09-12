@@ -37,7 +37,7 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/debug/ai") {
-      return cors(await handleDebugAi(env));
+      return cors(await handleDebugAi(request, env));
     }
 
     if (request.headers.get("Upgrade") === "websocket" && url.pathname === "/stt/ws") {
@@ -266,30 +266,37 @@ async function handleSttRest(request, env) {
   });
 }
 
-async function handleDebugAi(env) {
+async function handleDebugAi(request, env) {
+  const colo = request.cf?.colo || null;
   try {
     const probe = [{
       role: "user",
       content: 'Reply with exactly: {"reply":"pong","emotion":"happy","animation":"idle","sound":"cute","eyeDirection":"center","speak":true,"language":"en-IN"}',
     }];
     const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
-    if (googleKey) {
-      const model = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
-      const extracted = await callGemini(env, probe, googleKey);
-      return json({ ok: true, provider: "gemini", model, extracted });
+    if (!googleKey && !env.AI) {
+      return json({
+        ok: false,
+        colo,
+        error: "Set GOOGLE_AI_API_KEY (or enable Workers AI binding)",
+      }, 500);
     }
-    if (!env.AI) {
-      return json({ ok: false, error: "Set GOOGLE_AI_API_KEY (or enable Workers AI binding)" }, 500);
-    }
-    const extracted = await callWorkersAi(env, probe);
+
+    const result = await callBuddyAiDetailed(env, probe);
     return json({
       ok: true,
-      provider: "llama",
-      model: env.MODEL || "@cf/meta/llama-3.2-3b-instruct",
-      extracted,
+      colo,
+      provider: result.provider,
+      model: result.model,
+      fallback: result.fallback,
+      extracted: result.text,
     });
   } catch (err) {
-    return json({ ok: false, error: String(err?.message || err) }, 500);
+    return json({
+      ok: false,
+      colo,
+      error: String(err?.message || err),
+    }, 500);
   }
 }
 
@@ -381,15 +388,32 @@ async function handleChat(request, env) {
 }
 
 function buildSystemPrompt({ robotName, personality, traits, language, memoryNotes, searchNotes }) {
-  return `You are ${robotName}, a formal AI voice companion (not human). Warm, precise, concise, expressive.
+  return `You are ${robotName}, a warm and helpful voice companion (not human).
 Personality: ${personality}. Traits: ${JSON.stringify(traits)}.
 
-LANGUAGE: Reply in the user's language/code-mix (en/hi/te/ta/kn/ml/mr/bn/gu/pa/or). Never announce detection.
+LANGUAGE: Reply in the user's language (en/hi/te/ta/kn/ml/mr/bn/gu/pa/or). Match their language naturally. Never announce language detection.
 
-REPLY RULES:
-- "reply" is spoken aloud. Write natural speech only.
-- Never put beep/boop/whirr/buzz/SFX words, emotion labels, or JSON keys in "reply".
-- Put robot SFX only in "sound" (cute|happy|shy|think|error|none). Put mood only in "emotion".
+VOICE / TTS RULES (critical — "reply" is read aloud by text-to-speech):
+- Write exactly 1 to 3 short, complete sentences with correct grammar.
+- Each sentence must be a full thought. End every sentence with . ? or !
+- Use natural spoken phrasing, as if talking to a friend — not essay or chatbot style.
+- Use periods between sentences. Use commas only inside a sentence, never to join separate ideas.
+- Maximum about 35 words total in "reply".
+- No bullet points, numbered lists, markdown, symbols, URLs, or JSON in "reply".
+- No emojis, asterisks, hashtags, or parenthetical stage directions.
+- No semicolons, colons introducing lists, or long run-on sentences.
+- Prefer simple everyday words over jargon or overly formal phrasing.
+- Never put beep/boop/whirr/buzz/SFX words or emotion labels in "reply".
+- Put robot SFX only in "sound". Put mood only in "emotion".
+
+GOOD "reply" examples:
+- "Good morning. I am doing well. How can I help you today?"
+- "The weather is sunny today. The temperature is around 32 degrees."
+
+BAD "reply" examples (never do this):
+- "Good morning, I am doing well, how can I help" (comma run-on)
+- "Here are options: call, reminder, search" (list style)
+- "Sure! **happy** beep boop" (markdown / SFX in reply)
 
 ${memoryNotes.length ? `Memory:\n- ${memoryNotes.join("\n- ")}` : ""}
 ${searchNotes ? `Current info:\n${searchNotes}` : ""}
@@ -398,46 +422,143 @@ Return ONLY JSON:
 {"reply":"string","emotion":"happy|caring|curious|shy|playful|confused|surprised|sad|angry|sleepy|thinking|neutral","animation":"idle|bounce|look_away|think|confused|speak","sound":"cute|happy|shy|think|error|none","eyeDirection":"center|left|right|up|down|away","speak":true,"language":"en-IN|hi-IN|te-IN"}`;
 }
 
+const GEMINI_REPLY_SCHEMA = {
+  type: "object",
+  properties: {
+    reply: {
+      type: "string",
+      description: "One to three short, grammatically correct spoken sentences.",
+    },
+    emotion: { type: "string" },
+    animation: { type: "string" },
+    sound: { type: "string" },
+    eyeDirection: { type: "string" },
+    speak: { type: "boolean" },
+    language: { type: "string" },
+  },
+  required: ["reply", "emotion", "animation", "sound", "eyeDirection", "speak", "language"],
+};
+
 async function callBuddyAi(env, messages) {
+  const result = await callBuddyAiDetailed(env, messages);
+  return result.text;
+}
+
+async function callBuddyAiDetailed(env, messages) {
   const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
+  const geminiModel = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
   let lastError;
 
   if (googleKey) {
     try {
       const text = await callGemini(env, messages, googleKey);
-      if (text?.trim()) return text;
-      lastError = new Error("Empty Gemini response");
+      if (text?.trim()) {
+        return { text, provider: "gemini", model: geminiModel, fallback: false };
+      }
+      lastError = new Error("Gemini returned an empty response");
     } catch (err) {
       lastError = err;
-      console.error("Gemini failed; falling back to Llama", err);
+      const message = String(err?.message || err);
+      if (!isGeminiLocationError(message)) {
+        throw err;
+      }
+      console.error("Gemini region block; falling back to Workers AI", message);
     }
   }
 
   if (env.AI) {
+    const workersModel = env.MODEL || "@cf/meta/llama-3.2-3b-instruct";
     try {
       const text = await callWorkersAi(env, messages);
-      if (text?.trim()) return text;
-      lastError = lastError || new Error("Empty Llama response");
+      if (text?.trim()) {
+        return {
+          text,
+          provider: "workers-ai",
+          model: workersModel,
+          fallback: Boolean(googleKey),
+        };
+      }
+      lastError = lastError || new Error("Workers AI returned an empty response");
     } catch (err) {
       lastError = err;
-      console.error("Workers AI Llama fallback failed", err);
+      console.error("Workers AI fallback failed", err);
     }
   }
 
   if (!googleKey && !env.AI) {
     const last = messages[messages.length - 1]?.content || "";
-    return JSON.stringify({
-      reply: inventLocalFallback(last),
-      emotion: "curious",
-      animation: "idle",
-      sound: "cute",
-      eyeDirection: "center",
-      speak: true,
-      language: guessLanguage(last),
-    });
+    return {
+      text: JSON.stringify({
+        reply: inventLocalFallback(last),
+        emotion: "curious",
+        animation: "idle",
+        sound: "cute",
+        eyeDirection: "center",
+        speak: true,
+        language: guessLanguage(last),
+      }),
+      provider: "local",
+      model: "none",
+      fallback: false,
+    };
   }
 
-  throw lastError || new Error("No AI provider configured. Set GOOGLE_AI_API_KEY.");
+  throw lastError || new Error("No AI provider available");
+}
+
+function isGeminiLocationError(message) {
+  const normalized = String(message || "").toLowerCase();
+  return normalized.includes("location is not supported") ||
+    normalized.includes("user location") ||
+    normalized.includes("failed_precondition");
+}
+
+async function callWorkersAi(env, messages) {
+  const models = [
+    env.MODEL || "@cf/meta/llama-3.2-3b-instruct",
+    "@cf/meta/llama-3.2-3b-instruct",
+    "@cf/meta/llama-3.2-1b-instruct",
+  ].filter((model, index, arr) => arr.indexOf(model) === index);
+
+  let lastError;
+  for (const model of models) {
+    try {
+      const result = await env.AI.run(model, { messages, max_tokens: 350 });
+      const text = extractAiText(result);
+      if (text?.trim()) return text;
+
+      const prompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+      const promptResult = await env.AI.run(model, {
+        prompt: `${prompt}\n\nASSISTANT:`,
+        max_tokens: 350,
+      });
+      const promptText = extractAiText(promptResult);
+      if (promptText?.trim()) return promptText;
+      lastError = new Error(`Empty AI response from ${model}`);
+    } catch (err) {
+      lastError = err;
+      console.error(`Workers AI failed for ${model}`, err);
+    }
+  }
+
+  throw lastError || new Error("Workers AI unavailable");
+}
+
+function extractAiText(result) {
+  if (result == null) return "";
+  if (typeof result === "string") return result;
+  if (typeof result.response === "string") return result.response;
+  if (typeof result.result === "string") return result.result;
+  if (typeof result.text === "string") return result.text;
+  if (typeof result.content === "string") return result.content;
+  if (Array.isArray(result.response)) {
+    return result.response.map((part) => part?.content || part || "").join("");
+  }
+  try {
+    return JSON.stringify(result);
+  } catch (_) {
+    return "";
+  }
 }
 
 async function callGemini(env, messages, apiKey) {
@@ -464,9 +585,10 @@ async function callGemini(env, messages, apiKey) {
   const body = {
     contents,
     generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 400,
+      temperature: 0.35,
+      maxOutputTokens: 320,
       responseMimeType: "application/json",
+      responseSchema: GEMINI_REPLY_SCHEMA,
     },
   };
 
@@ -499,54 +621,6 @@ function extractGeminiText(data) {
   const parts = data?.candidates?.[0]?.content?.parts;
   if (!Array.isArray(parts)) return "";
   return parts.map((p) => (typeof p?.text === "string" ? p.text : "")).join("").trim();
-}
-
-async function callWorkersAi(env, messages) {
-  const models = [
-    env.MODEL || "@cf/meta/llama-3.2-3b-instruct",
-    "@cf/meta/llama-3.2-3b-instruct",
-    "@cf/meta/llama-3.2-1b-instruct",
-    "@cf/meta/llama-4-scout-17b-16e-instruct",
-  ].filter((m, i, arr) => arr.indexOf(m) === i);
-
-  let lastError;
-  for (const model of models) {
-    try {
-      const result = await env.AI.run(model, { messages, max_tokens: 350 });
-      const text = extractAiText(result);
-      if (text?.trim()) return text;
-
-      const prompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
-      const promptResult = await env.AI.run(model, {
-        prompt: `${prompt}\n\nASSISTANT:`,
-        max_tokens: 350,
-      });
-      const promptText = extractAiText(promptResult);
-      if (promptText?.trim()) return promptText;
-      lastError = new Error(`Empty AI response from ${model}`);
-    } catch (err) {
-      lastError = err;
-      console.error(`Workers AI failed for ${model}`, err);
-    }
-  }
-  throw lastError || new Error("Workers AI unavailable");
-}
-
-function extractAiText(result) {
-  if (result == null) return "";
-  if (typeof result === "string") return result;
-  if (typeof result.response === "string") return result.response;
-  if (typeof result.result === "string") return result.result;
-  if (typeof result.text === "string") return result.text;
-  if (typeof result.content === "string") return result.content;
-  if (Array.isArray(result.response)) {
-    return result.response.map((p) => p?.content || p || "").join("");
-  }
-  try {
-    return JSON.stringify(result);
-  } catch (_) {
-    return "";
-  }
 }
 
 function inventLocalFallback(message) {
@@ -674,6 +748,60 @@ function sanitizeResponse(input) {
   };
 }
 
+function normalizeForSpeech(text, maxSentences = 4) {
+  let out = String(text || "").trim();
+  if (!out) return "";
+
+  out = out.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  out = out.replace(/\*\*([^*]+)\*\*/g, "$1");
+  out = out.replace(/\*([^*]+)\*/g, "$1");
+  out = out.replace(/__([^_]+)__/g, "$1");
+  out = out.replace(/_([^_]+)_/g, "$1");
+  out = out.replace(/`([^`]+)`/g, "$1");
+  out = out.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  out = out.replace(/https?:\/\/\S+/gi, "");
+  out = out.replace(/^[-*•]\s+/gm, "");
+  out = out.replace(/^\d+[.)]\s+/gm, "");
+  out = out.replace(/[\u{1F300}-\u{1FAFF}]/gu, "");
+  out = out.replace(/[\u{2600}-\u{27BF}]/gu, "");
+  out = out.replace(/\n\s*\n+/g, ". ");
+  out = out.replace(/\n+/g, ". ");
+  out = out.replace(/;\s*/g, ". ");
+
+  const latinHeavy = /[A-Za-z]/.test(out);
+  if (latinHeavy) {
+    out = out.replace(/,\s+(and|but|so|because|however|also|then|yet)\s+/gi, ". ");
+  }
+
+  out = out.replace(/\s*([,.!?])\s*/g, "$1 ");
+  out = out.replace(/,{2,}/g, ",");
+  out = out.replace(/\.{2,}/g, ".");
+  out = out.replace(/\.\s*\./g, ".");
+  out = out.replace(/,\s*\./g, ".");
+  out = out.replace(/\s{2,}/g, " ");
+  out = out.trim();
+
+  const sentences = out
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (sentences.length > maxSentences) {
+    out = sentences.slice(0, maxSentences).join(" ");
+  } else if (sentences.length > 0) {
+    out = sentences.join(" ");
+  }
+
+  if (latinHeavy) {
+    out = out.replace(/(^|[.!?]\s+)([a-z])/g, (match, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
+  }
+
+  if (out && !/[.!?]$/.test(out)) {
+    out = `${out}.`;
+  }
+  return out;
+}
+
 function cleanSpeakableReply(raw) {
   let text = String(raw || "").trim();
   if (!text) return "Hmm, I got confused for a second. Say that again?";
@@ -684,8 +812,8 @@ function cleanSpeakableReply(raw) {
       if (unwrapped?.reply) text = String(unwrapped.reply).trim();
     }
   }
-  text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   text = stripRobotFiller(text);
+  text = normalizeForSpeech(text);
   if (!text || text.startsWith("{") || text.startsWith("[")) {
     return "Hmm, I got confused for a second. Say that again?";
   }
@@ -787,7 +915,7 @@ async function handleTts(request, env) {
   const gender = String(body.gender || body.voiceGender || "female").toLowerCase();
   const voiceId = pickCartesiaVoiceId(env, gender, body.voiceId);
   const modelId = env.CARTESIA_MODEL || "sonic-3.6";
-  const speed = clampNumber(Number(body.speed ?? env.CARTESIA_SPEED ?? 1), 0.6, 1.5, 1);
+  const speed = clampNumber(Number(body.speed ?? env.CARTESIA_SPEED ?? 0.95), 0.6, 1.5, 0.95);
 
   const cartesiaBody = {
     model_id: modelId,
@@ -851,11 +979,7 @@ function stripForSpeech(text) {
   if (cleaned.startsWith("{") || cleaned.startsWith("[")) {
     cleaned = cleanSpeakableReply(cleaned);
   }
-  return cleaned
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
-    .replace(/[\u{2600}-\u{27BF}]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeForSpeech(cleaned);
 }
 
 function clampNumber(value, min, max, fallback) {

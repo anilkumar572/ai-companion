@@ -1,11 +1,10 @@
 class NovaConstants {
-  static const appName = 'Nova';
+  static const appName = 'Teju';
   static const tagline = 'Your voice companion for calls, reminders, and everyday tasks';
   static const prefsVoiceGender = 'voice_gender';
   static const prefsHasOnboarded = 'has_onboarded';
   static const prefsInstallationId = 'installation_id';
   static const prefsPreferredLanguage = 'preferred_language';
-  static const prefsWakeWordEnabled = 'wake_word_enabled';
 
   /// All cloud keys (Gemini, Sarvam, Cartesia) live on this worker.
   static const workerUrl = 'https://buddy-ai-worker.anilgithubd.workers.dev';
@@ -13,9 +12,9 @@ class NovaConstants {
   static const defaultSttLanguage = 'unknown';
 
   static const formalSystemPrompt = '''
-You are Nova, a formal and precise voice companion.
-Speak with clarity, respect, and brevity.
-Address the user professionally.
-Never use slang or casual filler words.
+You are Teju, a warm and helpful voice companion.
+Speak in short, natural sentences that sound good when read aloud.
+Use clear grammar and proper punctuation.
+Never use bullet points, markdown, or overly formal jargon.
 ''';
 }

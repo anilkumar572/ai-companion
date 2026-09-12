@@ -280,9 +280,9 @@ class NovaAgent {
 
       final lines = matches
           .take(5)
-          .map((match) => '${match.displayName} — ${match.phoneNumber}')
-          .join('\n');
-      return AgentResult(message: 'Matching contacts:\n$lines');
+          .map((match) => '${match.displayName}, ${match.phoneNumber}')
+          .join('. Next, ');
+      return AgentResult(message: 'Matching contacts: $lines.');
     } on ContactsPermissionException {
       return const AgentResult(
         message: 'Contacts permission is required to search your contacts.',
@@ -385,11 +385,14 @@ class NovaAgent {
   String _cleanInput(String input) {
     var text = input.trim();
     text = text.replaceFirst(
-      RegExp(r'^\s*(hey|hi|hello)\s+n[o0]va[,.!\s]*', caseSensitive: false),
+      RegExp(
+        r'^\s*(hey|hi|hello)\s+t[e3]ju[,.!\s]*',
+        caseSensitive: false,
+      ),
       '',
     );
     text = text.replaceFirst(
-      RegExp(r'^\s*n[o0]va[,.!\s]+', caseSensitive: false),
+      RegExp(r'^\s*t[e3]ju[,.!\s]+', caseSensitive: false),
       '',
     );
     return text.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -398,7 +401,7 @@ class NovaAgent {
   bool _isPureGreeting(String normalized) {
     if (normalized.isEmpty) return true;
     return RegExp(
-      r'^(hi|hello|hey|good morning|good afternoon|good evening)(\s+n[o0]va)?[!.]?\s*$',
+      r'^(hi|hello|hey|good morning|good afternoon|good evening)(\s+t[e3]ju)?[!.]?\s*$',
       caseSensitive: false,
     ).hasMatch(normalized);
   }
@@ -519,9 +522,9 @@ class NovaAgent {
 
     final formatter = DateFormat('MMM d, h:mm a');
     final lines = items
-        .map((item) => '${formatter.format(item.scheduledAt)} — ${item.title}')
-        .join('\n');
-    return 'Your upcoming reminders are:\n$lines';
+        .map((item) => '${formatter.format(item.scheduledAt)}, ${item.title}')
+        .join('. Next, ');
+    return 'Your upcoming reminders are: $lines.';
   }
 
   Future<String> _handleReminder(String text) async {

@@ -11,6 +11,7 @@ class SpeechService {
   final SpeechToText _speech;
   bool _initialized = false;
   bool _sessionActive = false;
+  String? _cachedLocaleId;
   SpeechStatusCallback? _onStatus;
   SpeechErrorCallback? _onError;
 
@@ -54,49 +55,40 @@ class SpeechService {
       throw StateError('Microphone permission was denied.');
     }
 
-    await shutdown();
-
-    final resolvedLocale = await _resolveLocaleId(localeId);
-    final attempts = <_ListenAttempt>[
-      _ListenAttempt(localeId: null, onDevice: false),
-      if (resolvedLocale != null)
-        _ListenAttempt(localeId: resolvedLocale, onDevice: false),
-      if (resolvedLocale != null)
-        _ListenAttempt(localeId: resolvedLocale, onDevice: true),
-    ];
-
-    for (final attempt in attempts) {
-      final started = await _speech.listen(
-        onResult: (SpeechRecognitionResult result) {
-          onResult(result.recognizedWords, result.finalResult);
-        },
-        onSoundLevelChange: onSoundLevel == null
-            ? null
-            : (level) => onSoundLevel(_normalizeSoundLevel(level)),
-        listenOptions: SpeechListenOptions(
-          listenMode: ListenMode.dictation,
-          partialResults: true,
-          cancelOnError: false,
-          onDevice: attempt.onDevice,
-          listenFor: listenFor,
-          pauseFor: pauseFor,
-          localeId: attempt.localeId,
-        ),
-      );
-
-      if (started) {
-        _sessionActive = true;
-        return;
-      }
-
-      await _speech.cancel();
+    if (_sessionActive || _speech.isListening) {
+      await shutdown(hardwareCooldown: true);
     }
 
-    throw StateError('Could not start speech recognition on this device.');
+    final resolvedLocale = await _resolveLocaleId(localeId);
+    final started = await _speech.listen(
+      onResult: (SpeechRecognitionResult result) {
+        onResult(result.recognizedWords, result.finalResult);
+      },
+      onSoundLevelChange: onSoundLevel == null
+          ? null
+          : (level) => onSoundLevel(_normalizeSoundLevel(level)),
+      listenOptions: SpeechListenOptions(
+        listenMode: ListenMode.dictation,
+        partialResults: true,
+        cancelOnError: false,
+        // One session per tap — avoids Android's double listening chime.
+        onDevice: resolvedLocale != null,
+        listenFor: listenFor,
+        pauseFor: pauseFor,
+        localeId: resolvedLocale,
+      ),
+    );
+
+    if (!started) {
+      throw StateError('Could not start speech recognition on this device.');
+    }
+
+    _sessionActive = true;
   }
 
   /// Hard stop — releases mic immediately. Call before TTS playback.
-  Future<void> shutdown() async {
+  Future<void> shutdown({bool hardwareCooldown = true}) async {
+    final wasActive = _sessionActive || _speech.isListening;
     _sessionActive = false;
     if (!_initialized) return;
 
@@ -110,18 +102,26 @@ class SpeechService {
       await _speech.cancel();
     } catch (_) {}
 
-    // Let Android release the mic hardware before TTS takes audio focus.
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    // Only wait for Android mic release when something was actually listening.
+    if (hardwareCooldown && wasActive) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
   }
 
-  Future<void> releaseMicrophone() => shutdown();
+  Future<void> releaseMicrophone() => shutdown(hardwareCooldown: true);
 
   Future<void> dispose() async {
     await shutdown();
   }
 
   Future<String?> _resolveLocaleId(String? preferred) async {
-    if (preferred == null || preferred.trim().isEmpty) return null;
+    if (preferred == null || preferred.trim().isEmpty) {
+      return _cachedLocaleId;
+    }
+
+    if (_cachedLocaleId != null) {
+      return _cachedLocaleId;
+    }
 
     final locales = await _speech.locales();
     if (locales.isEmpty) return null;
@@ -129,7 +129,7 @@ class SpeechService {
     final normalized = _normalizeLocale(preferred);
     for (final locale in locales) {
       if (_normalizeLocale(locale.localeId) == normalized) {
-        return locale.localeId;
+        return _cachedLocaleId = locale.localeId;
       }
     }
 
@@ -138,7 +138,7 @@ class SpeechService {
       final localeNormalized = _normalizeLocale(locale.localeId);
       if (localeNormalized == language ||
           localeNormalized.startsWith('$language-')) {
-        return locale.localeId;
+        return _cachedLocaleId = locale.localeId;
       }
     }
 
@@ -171,14 +171,4 @@ class SpeechService {
       _ => message,
     };
   }
-}
-
-class _ListenAttempt {
-  const _ListenAttempt({
-    required this.localeId,
-    required this.onDevice,
-  });
-
-  final String? localeId;
-  final bool onDevice;
 }

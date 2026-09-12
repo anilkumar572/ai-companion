@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import '../core/constants.dart';
 import '../models/voice_gender.dart';
+import '../utils/speech_text.dart';
 import 'cartesia_tts_service.dart';
 
 class TtsService {
@@ -24,6 +25,7 @@ class TtsService {
   final CartesiaTtsService _cartesia;
   final FlutterTts _deviceTts;
   final SharedPreferences? _prefs;
+  AudioPlayer? _player;
 
   VoiceGender _gender = VoiceGender.female;
   bool _initialized = false;
@@ -86,13 +88,12 @@ class TtsService {
       await initialize(gender: _gender);
     }
 
+    // Worker chat replies are already normalized; keep a light pass for local replies.
     final prepared = _prepareSpeechText(text);
     if (prepared.isEmpty) {
       onComplete?.call();
       return;
     }
-
-    await Future<void>.delayed(const Duration(milliseconds: 900));
 
     final language = languageOverride ?? preferredLanguage;
     Uint8List? audio;
@@ -112,12 +113,14 @@ class TtsService {
       return;
     }
 
-    onStart?.call();
-
     final tempPath = await _writeTempWav(audio);
     try {
-      final playedOnlineVoice = await _playCartesiaFile(tempPath);
+      final playedOnlineVoice = await _playCartesiaFile(
+        tempPath,
+        onStart: onStart,
+      );
       if (!playedOnlineVoice) {
+        onStart?.call();
         await _speakWithDeviceTts(prepared, language);
       }
       onComplete?.call();
@@ -126,26 +129,23 @@ class TtsService {
     }
   }
 
-  Future<bool> _playCartesiaFile(String path) async {
-    final player = AudioPlayer();
+  Future<bool> _playCartesiaFile(
+    String path, {
+    VoidCallback? onStart,
+  }) async {
+    final player = _player ??= AudioPlayer();
     try {
+      await player.stop();
       await player.setFilePath(path);
       await player.setVolume(1.0);
-
-      if (player.duration == null || player.duration == Duration.zero) {
-        await player.load();
-      }
-
-      final totalDuration = player.duration;
-      if (totalDuration == null || totalDuration == Duration.zero) {
-        return false;
-      }
-
       await player.play();
+
       if (!await _waitUntilAudible(player)) {
         await player.stop();
         return false;
       }
+
+      onStart?.call();
 
       await player.processingStateStream.firstWhere(
         (state) => state == ProcessingState.completed,
@@ -153,26 +153,16 @@ class TtsService {
       return true;
     } catch (_) {
       return false;
-    } finally {
-      try {
-        await player.stop();
-      } catch (_) {}
-      try {
-        await player.dispose();
-      } catch (_) {}
     }
   }
 
   Future<bool> _waitUntilAudible(AudioPlayer player) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 4));
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
     while (DateTime.now().isBefore(deadline)) {
-      if (player.playing) {
-        final position = player.position;
-        if (position > const Duration(milliseconds: 80)) {
-          return true;
-        }
+      if (player.playing && player.position > const Duration(milliseconds: 40)) {
+        return true;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
     }
     return player.playing;
   }
@@ -215,11 +205,18 @@ class TtsService {
   }
 
   Future<void> stop() async {
+    try {
+      await _player?.stop();
+    } catch (_) {}
     await _deviceTts.stop();
   }
 
   Future<void> dispose() async {
-    await _deviceTts.stop();
+    await stop();
+    try {
+      await _player?.dispose();
+    } catch (_) {}
+    _player = null;
   }
 
   String _previewText() {
@@ -228,14 +225,7 @@ class TtsService {
         : 'Female voice profile activated.';
   }
 
-  String _prepareSpeechText(String text) {
-    return text
-        .replaceAll('\n', '. ')
-        .replaceAll(RegExp(r'[\u{1F300}-\u{1FAFF}]', unicode: true), '')
-        .replaceAll(RegExp(r'[\u{2600}-\u{27BF}]', unicode: true), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-  }
+  String _prepareSpeechText(String text) => normalizeForSpeech(text);
 }
 
 class TtsPlaybackException implements Exception {

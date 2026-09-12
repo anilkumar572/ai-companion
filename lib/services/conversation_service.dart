@@ -1,5 +1,6 @@
 import '../core/constants.dart';
 import '../models/agent_result.dart';
+import '../utils/speech_text.dart';
 import 'nova_agent.dart';
 import 'worker_chat_service.dart';
 
@@ -27,7 +28,13 @@ class ConversationService {
     );
 
     if (!localResult.deferToCloud) {
-      return localResult;
+      return AgentResult(
+        message: normalizeForSpeech(localResult.message),
+        voiceGenderChange: localResult.voiceGenderChange,
+        mediaPath: localResult.mediaPath,
+        isVideo: localResult.isVideo,
+        speakLanguage: language,
+      );
     }
 
     try {
@@ -36,8 +43,8 @@ class ConversationService {
         installationId: installationId,
         message: input,
         language: language,
-        personality: 'formal',
-        robotName: 'Nova',
+        personality: 'friendly',
+        robotName: NovaConstants.appName,
         conversationContext: _cloudHistory,
       );
 
@@ -47,7 +54,10 @@ class ConversationService {
         _cloudHistory.removeRange(0, _cloudHistory.length - 16);
       }
 
-      return AgentResult(message: response.reply);
+      return AgentResult(
+        message: normalizeForSpeech(response.reply),
+        speakLanguage: response.language,
+      );
     } catch (_) {
       return const AgentResult(
         message:

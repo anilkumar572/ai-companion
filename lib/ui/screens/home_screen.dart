@@ -36,16 +36,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
-    final provider = context.read<NovaProvider>();
     if (lifecycleState == AppLifecycleState.paused ||
         lifecycleState == AppLifecycleState.inactive ||
         lifecycleState == AppLifecycleState.detached) {
-      provider.releaseMicrophone();
-      return;
-    }
-
-    if (lifecycleState == AppLifecycleState.resumed) {
-      provider.resumeWakeWordIfNeeded();
+      context.read<NovaProvider>().releaseMicrophone();
     }
   }
 
@@ -108,27 +102,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           height: 1.4,
                         ),
                   ).animate().fadeIn(duration: 500.ms),
-                  const Spacer(),
+                  const SizedBox(height: 16),
                   NovaOrb(
                     state: provider.state,
                     audioLevel: provider.audioLevel,
-                    wakeWordListening: provider.wakeWordListening,
+                    enabled: provider.isBootstrapped,
                     onTap: _handleOrbTap,
                   ),
-                  const SizedBox(height: 24),
-                  StatusHud(
-                    state: provider.state,
-                    statusMessage: provider.statusMessage,
-                    liveTranscript: provider.liveTranscript,
-                    lastResponse: provider.lastResponse,
-                    mediaPath: provider.lastMediaPath,
-                    isVideo: provider.lastMediaIsVideo,
+                  const SizedBox(height: 20),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: StatusHud(
+                        state: provider.state,
+                        statusMessage: provider.statusMessage,
+                        liveTranscript: provider.liveTranscript,
+                        lastResponse: provider.lastResponse,
+                        mediaPath: provider.lastMediaPath,
+                        isVideo: provider.lastMediaIsVideo,
+                      ),
+                    ),
                   ),
-                  const Spacer(),
+                  const SizedBox(height: 12),
                   _BottomHint(
                     state: provider.state,
-                    wakeWordEnabled: provider.wakeWordEnabled,
-                    wakeWordListening: provider.wakeWordListening,
+                    isBootstrapped: provider.isBootstrapped,
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -142,6 +140,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _handleOrbTap() {
     final provider = context.read<NovaProvider>();
+    if (!provider.isBootstrapped) return;
+
     switch (provider.state) {
       case NovaAgentState.idle:
       case NovaAgentState.error:
@@ -159,22 +159,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 class _BottomHint extends StatelessWidget {
   const _BottomHint({
     required this.state,
-    required this.wakeWordEnabled,
-    required this.wakeWordListening,
+    required this.isBootstrapped,
   });
 
   final NovaAgentState state;
-  final bool wakeWordEnabled;
-  final bool wakeWordListening;
+  final bool isBootstrapped;
 
   @override
   Widget build(BuildContext context) {
+    if (!isBootstrapped) {
+      return Text(
+        'Getting Teju ready…',
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: NovaTheme.textMuted,
+              height: 1.45,
+            ),
+      );
+    }
+
     final hint = switch (state) {
-      NovaAgentState.idle => wakeWordEnabled
-          ? wakeWordListening
-              ? 'Listening for "Nova" — or tap the orb'
-              : 'Say "Nova" to speak — or tap the orb'
-          : 'Tap the orb to speak',
+      NovaAgentState.idle => 'Tap the orb to speak',
       NovaAgentState.listening => 'Speak now — tap the orb when finished',
       NovaAgentState.thinking => 'Thinking through your request',
       NovaAgentState.speaking => 'Tap the orb to stop speaking',
