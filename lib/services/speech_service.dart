@@ -25,13 +25,15 @@ class SpeechService {
   Future<void> startListening({
     required void Function(String transcript, bool isFinal) onResult,
     void Function(double level)? onSoundLevel,
-    Duration listenFor = const Duration(minutes: 2),
-    Duration pauseFor = const Duration(seconds: 4),
+    Duration listenFor = const Duration(seconds: 30),
+    Duration pauseFor = const Duration(seconds: 2),
     bool onDevice = true,
   }) async {
     if (!_initialized) {
       throw StateError('Speech recognition is not initialized.');
     }
+
+    await releaseMicrophone();
 
     await _speech.listen(
       onResult: (SpeechRecognitionResult result) {
@@ -39,9 +41,9 @@ class SpeechService {
       },
       onSoundLevelChange: onSoundLevel,
       listenOptions: SpeechListenOptions(
-        listenMode: ListenMode.dictation,
+        listenMode: ListenMode.confirmation,
         partialResults: true,
-        cancelOnError: false,
+        cancelOnError: true,
         onDevice: onDevice,
         listenFor: listenFor,
         pauseFor: pauseFor,
@@ -49,19 +51,33 @@ class SpeechService {
     );
   }
 
+  /// Fully releases the microphone. Prefer this over [stopListening] when idle.
+  Future<void> releaseMicrophone() async {
+    if (!_initialized) return;
+
+    try {
+      if (_speech.isListening) {
+        await _speech.cancel();
+      }
+    } catch (_) {
+      try {
+        await _speech.stop();
+      } catch (_) {
+        // Ignore — engine may already be stopped.
+      }
+    }
+  }
+
   Future<void> stopListening() async {
-    if (_speech.isListening) {
+    if (!_initialized || !_speech.isListening) return;
+    try {
       await _speech.stop();
+    } catch (_) {
+      await releaseMicrophone();
     }
   }
 
-  Future<void> cancel() async {
-    if (_speech.isListening) {
-      await _speech.cancel();
-    }
-  }
-
-  void dispose() {
-    _speech.stop();
+  Future<void> dispose() async {
+    await releaseMicrophone();
   }
 }

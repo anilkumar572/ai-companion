@@ -72,6 +72,8 @@ class NovaProvider extends ChangeNotifier {
   bool _commandCaptureActive = false;
   bool _processingTranscript = false;
 
+  bool get isMicActive => _speech.isListening;
+
   Future<void> bootstrap() async {
     voiceGender = voiceGenderFromStorage(_prefs.getString(NovaConstants.prefsVoiceGender));
 
@@ -98,8 +100,7 @@ class NovaProvider extends ChangeNotifier {
     }
 
     isBootstrapped = true;
-    _enterIdle();
-    notifyListeners();
+    await _enterIdle();
   }
 
   String get workerUrl => NovaConstants.workerUrl;
@@ -113,14 +114,19 @@ class NovaProvider extends ChangeNotifier {
 
   Future<void> setVoiceGender(VoiceGender gender) async {
     if (voiceGender == gender) {
-      await _tts.setGender(gender, preview: true);
+      await _releaseMicAndPreview(gender);
       return;
     }
 
     voiceGender = gender;
     await _prefs.setString(NovaConstants.prefsVoiceGender, gender.storageKey);
-    await _tts.setGender(gender, preview: true);
+    await _releaseMicAndPreview(gender);
     notifyListeners();
+  }
+
+  Future<void> _releaseMicAndPreview(VoiceGender gender) async {
+    await _speech.releaseMicrophone();
+    await _tts.setGender(gender, preview: true);
   }
 
   Future<void> startListening() async {
@@ -130,9 +136,10 @@ class NovaProvider extends ChangeNotifier {
       return;
     }
 
-    await _speech.stopListening();
+    await _speech.releaseMicrophone();
     errorMessage = null;
     liveTranscript = '';
+    audioLevel = 0;
 
     await _startCommandListening(
       statusMessage: 'Listening… tap the orb when done',
@@ -140,22 +147,41 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> stopListening() async {
-    await _speech.stopListening();
-    _commandCaptureActive = false;
-
-    if (state == NovaAgentState.listening) {
-      final transcript = liveTranscript.trim();
-      if (transcript.isNotEmpty) {
-        await _processTranscript(transcript);
-        return;
-      }
-      _enterIdle();
+    if (state != NovaAgentState.listening) {
+      await _speech.releaseMicrophone();
+      return;
     }
+
+    _commandCaptureActive = false;
+    final transcript = liveTranscript.trim();
+    await _speech.releaseMicrophone();
+    audioLevel = 0;
+
+    if (transcript.isNotEmpty) {
+      await _processTranscript(transcript);
+      return;
+    }
+
+    await _enterIdle();
   }
 
   Future<void> stopSpeaking() async {
     await _tts.stop();
-    _enterIdle();
+    await _enterIdle();
+  }
+
+  /// Release mic when app goes to background or user leaves the screen.
+  Future<void> releaseMicrophone() async {
+    if (state == NovaAgentState.listening) {
+      _commandCaptureActive = false;
+      await _speech.releaseMicrophone();
+      audioLevel = 0;
+      await _enterIdle();
+      return;
+    }
+
+    await _speech.releaseMicrophone();
+    audioLevel = 0;
   }
 
   Future<void> _startCommandListening({
@@ -166,51 +192,68 @@ class NovaProvider extends ChangeNotifier {
     this.statusMessage = statusMessage;
     notifyListeners();
 
-    await _speech.startListening(
-      onResult: (transcript, isFinal) {
-        liveTranscript = transcript;
-        notifyListeners();
-        if (isFinal && transcript.trim().isNotEmpty && !_processingTranscript) {
+    try {
+      await _speech.startListening(
+        onResult: (transcript, isFinal) {
+          liveTranscript = transcript;
+          notifyListeners();
+
+          if (!isFinal || transcript.trim().isEmpty || _processingTranscript) {
+            return;
+          }
+
           _commandCaptureActive = false;
-          unawaited(_processTranscript(transcript.trim()));
-        }
-      },
-      onSoundLevel: _updateAudioLevel,
-      listenFor: const Duration(seconds: 15),
-      pauseFor: const Duration(seconds: 3),
-      onDevice: false,
-    );
+          unawaited(_finalizeCapture(transcript.trim()));
+        },
+        onSoundLevel: _updateAudioLevel,
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 2),
+        onDevice: true,
+      );
+    } catch (error) {
+      _commandCaptureActive = false;
+      await _enterIdle();
+      _setRecoverableError('Could not start listening: $error');
+    }
+  }
+
+  Future<void> _finalizeCapture(String transcript) async {
+    await _speech.releaseMicrophone();
+    audioLevel = 0;
+    await _processTranscript(transcript);
   }
 
   void _handleSpeechStatus(String status) {
     if (status != 'done' && status != 'notListening') return;
     if (_speech.isListening) return;
-
     if (!_commandCaptureActive || state != NovaAgentState.listening) return;
+    if (_processingTranscript) return;
 
     _commandCaptureActive = false;
     final transcript = liveTranscript.trim();
-    if (transcript.isNotEmpty && !_processingTranscript) {
-      unawaited(_processTranscript(transcript));
+
+    if (transcript.isNotEmpty) {
+      unawaited(_finalizeCapture(transcript));
       return;
     }
 
-    liveTranscript = '';
-    _enterIdle();
+    unawaited(_enterIdle());
   }
 
-  void _enterIdle() {
-    unawaited(_speech.stopListening());
+  Future<void> _enterIdle() async {
+    await _speech.releaseMicrophone();
     _processingTranscript = false;
     _commandCaptureActive = false;
     errorMessage = null;
     audioLevel = 0;
+    liveTranscript = '';
     state = NovaAgentState.idle;
     statusMessage = 'Tap the orb to speak';
     notifyListeners();
   }
 
   void _updateAudioLevel(double level) {
+    if (state != NovaAgentState.listening) return;
     audioLevel = level.clamp(0.0, 1.0);
     notifyListeners();
   }
@@ -218,9 +261,10 @@ class NovaProvider extends ChangeNotifier {
   Future<void> _processTranscript(String transcript) async {
     if (_processingTranscript) return;
     _processingTranscript = true;
-
-    await _speech.stopListening();
     _commandCaptureActive = false;
+
+    await _speech.releaseMicrophone();
+    audioLevel = 0;
     errorMessage = null;
     liveTranscript = transcript;
 
@@ -255,15 +299,14 @@ class NovaProvider extends ChangeNotifier {
 
       await _tts.speak(
         result.message,
-        onComplete: () {
-          _processingTranscript = false;
-          _enterIdle();
+        onComplete: () async {
+          await _enterIdle();
         },
         languageOverride: preferredLanguage,
       );
     } catch (error) {
-      _processingTranscript = false;
       _setRecoverableError('Voice playback failed. Please try again.');
+      await _enterIdle();
     }
   }
 
@@ -277,6 +320,8 @@ class NovaProvider extends ChangeNotifier {
     state = NovaAgentState.error;
     statusMessage = message;
     _processingTranscript = false;
+    _commandCaptureActive = false;
+    audioLevel = 0;
     notifyListeners();
   }
 
