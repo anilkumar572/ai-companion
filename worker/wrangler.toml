@@ -1,0 +1,24 @@
+name = "buddy-ai-worker"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+[vars]
+GOOGLE_AI_MODEL = "gemini-2.5-flash-lite"
+MODEL = "@cf/meta/llama-3.2-3b-instruct"
+CARTESIA_MODEL = "sonic-3.6"
+CARTESIA_VERSION = "2026-08-14"
+CARTESIA_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
+CARTESIA_MALE_VOICE_ID = ""
+SARVAM_MODEL = "saaras:v3"
+SARVAM_MODE = "transcribe"
+SARVAM_LANGUAGE_CODE = "unknown"
+MAX_MESSAGE_CHARS = "1200"
+MAX_CONTEXT_TURNS = "8"
+RATE_LIMIT_PER_MINUTE = "30"
+SEARCH_PROVIDER = "none"
+
+# Set secrets with:
+# wrangler secret put GOOGLE_AI_API_KEY
+# wrangler secret put CARTESIA_API_KEY
+# wrangler secret put SARVAM_API_KEY
+# wrangler secret put BRAVE_API_KEY

@@ -17,10 +17,10 @@ import '../services/conversation_service.dart';
 import '../services/nova_agent.dart';
 import '../services/phone_service.dart';
 import '../services/reminder_service.dart';
-import '../services/sarvam_stt_service.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
 import '../services/web_search_service.dart';
+import '../services/worker_stt_stream_service.dart';
 import '../utils/wake_word_detector.dart';
 
 class NovaProvider extends ChangeNotifier {
@@ -54,20 +54,20 @@ class NovaProvider extends ChangeNotifier {
     required TtsService tts,
     required ConversationService conversation,
     ConnectivityService? connectivity,
-    SarvamSttService? sarvam,
+    WorkerSttStreamService? workerStt,
   })  : _prefs = prefs,
         _speech = speech,
         _tts = tts,
         _conversation = conversation,
         _connectivity = connectivity ?? ConnectivityService(),
-        _sarvam = sarvam ?? const SarvamSttService();
+        _workerStt = workerStt ?? WorkerSttStreamService();
 
   final SharedPreferences _prefs;
   final SpeechService _speech;
   final TtsService _tts;
   final ConversationService _conversation;
   final ConnectivityService _connectivity;
-  final SarvamSttService _sarvam;
+  final WorkerSttStreamService _workerStt;
 
   NovaAgentState state = NovaAgentState.idle;
   VoiceGender voiceGender = VoiceGender.female;
@@ -87,7 +87,7 @@ class NovaProvider extends ChangeNotifier {
   bool _wakeWordEnabled = true;
   bool _awaitingCommand = false;
   bool _restartingWakeWord = false;
-  Timer? _sarvamCaptureTimer;
+  bool _processingWorkerStt = false;
 
   Future<void> bootstrap() async {
     voiceGender = voiceGenderFromStorage(_prefs.getString(NovaConstants.prefsVoiceGender));
@@ -125,19 +125,9 @@ class NovaProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  String get cartesiaWorkerUrl => _tts.cartesiaWorkerUrl;
-  String get cartesiaLanguage => _tts.cartesiaLanguage;
-  double get cartesiaSpeed => _tts.cartesiaSpeed;
-  String get cartesiaFemaleVoiceId => _tts.cartesiaFemaleVoiceId;
-  String get cartesiaMaleVoiceId => _tts.cartesiaMaleVoiceId;
+  String get workerUrl => NovaConstants.workerUrl;
+  String get preferredLanguage => _tts.preferredLanguage;
   String get installationId => _tts.installationId;
-  String get sarvamApiKey => _prefs.getString(NovaConstants.prefsSarvamApiKey) ?? '';
-  String get sarvamLanguage =>
-      _prefs.getString(NovaConstants.prefsSarvamLanguage) ??
-      NovaConstants.defaultSarvamLanguage;
-  String get sarvamModel =>
-      _prefs.getString(NovaConstants.prefsSarvamModel) ??
-      NovaConstants.defaultSarvamModel;
   String get localModelPath => _prefs.getString(NovaConstants.prefsLocalModelPath) ?? '';
 
   Future<void> setOperationMode(OperationMode mode) async {
@@ -148,20 +138,8 @@ class NovaProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateSarvamSettings({
-    String? apiKey,
-    String? language,
-    String? model,
-  }) async {
-    if (apiKey != null) {
-      await _prefs.setString(NovaConstants.prefsSarvamApiKey, apiKey.trim());
-    }
-    if (language != null) {
-      await _prefs.setString(NovaConstants.prefsSarvamLanguage, language.trim());
-    }
-    if (model != null) {
-      await _prefs.setString(NovaConstants.prefsSarvamModel, model.trim());
-    }
+  Future<void> setPreferredLanguage(String language) async {
+    await _tts.setPreferredLanguage(language);
     notifyListeners();
   }
 
@@ -187,28 +165,6 @@ class NovaProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateCartesiaSettings({
-    String? workerUrl,
-    String? language,
-    double? speed,
-    String? femaleVoiceId,
-    String? maleVoiceId,
-    bool preview = false,
-  }) async {
-    await _tts.updateCartesiaSettings(
-      workerUrl: workerUrl,
-      language: language,
-      speed: speed,
-      femaleVoiceId: femaleVoiceId,
-      maleVoiceId: maleVoiceId,
-    );
-    notifyListeners();
-
-    if (preview) {
-      await _tts.speak('Cartesia settings updated.');
-    }
-  }
-
   Future<void> setVoiceGender(VoiceGender gender) async {
     if (voiceGender == gender) {
       await _tts.setGender(gender, preview: true);
@@ -229,6 +185,7 @@ class NovaProvider extends ChangeNotifier {
     }
 
     await _speech.stopListening();
+    await _workerStt.stopListening();
     _wakeWordEnabled = false;
     wakeWordListening = false;
     _awaitingCommand = false;
@@ -240,8 +197,8 @@ class NovaProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      if (await _shouldUseSarvam()) {
-        await _startSarvamCapture();
+      if (isOnlineActive) {
+        await _startWorkerSttCapture();
         return;
       }
 
@@ -261,10 +218,15 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> stopListening() async {
-    _sarvamCaptureTimer?.cancel();
-    if (await _speech.isRecording()) {
-      final audioPath = await _speech.stopCommandRecording();
-      await _transcribeSarvamRecording(audioPath);
+    if (isOnlineActive) {
+      await _workerStt.flush(
+        onTranscript: (transcript, isFinal) {
+          if (isFinal && transcript.trim().isNotEmpty && !_processingWorkerStt) {
+            _processTranscript(transcript);
+          }
+        },
+        onError: (message) => _setError(message),
+      );
       return;
     }
 
@@ -305,49 +267,30 @@ class NovaProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> _shouldUseSarvam() async {
-    return isOnlineActive && sarvamApiKey.trim().isNotEmpty;
-  }
-
-  Future<void> _startSarvamCapture() async {
-    await _speech.startCommandRecording();
-    statusMessage = '> sarvam capture active — speak now';
+  Future<void> _startWorkerSttCapture() async {
+    state = NovaAgentState.listening;
+    statusMessage = '> sarvam stream active — speak now';
     notifyListeners();
 
-    _sarvamCaptureTimer?.cancel();
-    _sarvamCaptureTimer = Timer(const Duration(seconds: 12), () async {
-      if (state != NovaAgentState.listening) return;
-      final audioPath = await _speech.stopCommandRecording();
-      await _transcribeSarvamRecording(audioPath);
-    });
-  }
-
-  Future<void> _transcribeSarvamRecording(String? audioPath) async {
-    _sarvamCaptureTimer?.cancel();
-    if (audioPath == null || audioPath.isEmpty) {
-      _setError('No audio was captured for Sarvam transcription.');
-      await _startWakeWordListening();
-      return;
-    }
-
-    state = NovaAgentState.thinking;
-    statusMessage = '> sarvam stt processing...';
-    notifyListeners();
-
-    try {
-      final transcript = await _sarvam.transcribe(
-        apiKey: sarvamApiKey,
-        audioPath: audioPath,
-        languageCode: sarvamLanguage,
-        model: sarvamModel,
-      );
-      liveTranscript = transcript;
-      notifyListeners();
-      await _processTranscript(transcript);
-    } catch (error) {
-      _setError('Sarvam transcription failed: $error');
-      await _startWakeWordListening();
-    }
+    await _workerStt.startListening(
+      workerBaseUrl: workerUrl,
+      installationId: installationId,
+      languageCode: NovaConstants.defaultSttLanguage,
+      listenFor: const Duration(seconds: 12),
+      onListening: () {
+        statusMessage = '> sarvam stream connected';
+        notifyListeners();
+      },
+      onTranscript: (transcript, isFinal) {
+        liveTranscript = transcript;
+        notifyListeners();
+        if (isFinal && transcript.trim().isNotEmpty && !_processingWorkerStt) {
+          _processingWorkerStt = true;
+          _processTranscript(transcript);
+        }
+      },
+      onError: (message) => _setError(message),
+    );
   }
 
   void _handleSpeechStatus(String status) {
@@ -379,6 +322,7 @@ class NovaProvider extends ChangeNotifier {
 
     isOnlineActive = await _resolveOnlineMode();
     await _applyModeDefaults();
+    _processingWorkerStt = false;
 
     _wakeWordEnabled = true;
     _awaitingCommand = false;
@@ -435,7 +379,7 @@ class NovaProvider extends ChangeNotifier {
       wakeWordListening = false;
       state = NovaAgentState.listening;
       statusMessage = isOnlineActive
-          ? '> nova online — awaiting command'
+          ? '> nova online — sarvam stream listening'
           : '> nova offline — awaiting command';
       notifyListeners();
       _speech.stopListening();
@@ -444,8 +388,8 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> _beginCommandCapture() async {
-    if (await _shouldUseSarvam()) {
-      await _startSarvamCapture();
+    if (isOnlineActive) {
+      await _startWorkerSttCapture();
       return;
     }
 
@@ -465,7 +409,7 @@ class NovaProvider extends ChangeNotifier {
 
   Future<void> _processTranscript(String transcript) async {
     await _speech.stopListening();
-    _sarvamCaptureTimer?.cancel();
+    await _workerStt.stopListening();
     _wakeWordEnabled = false;
     wakeWordListening = false;
     _awaitingCommand = false;
@@ -483,9 +427,9 @@ class NovaProvider extends ChangeNotifier {
       final result = await _conversation.respond(
         input: transcript,
         online: isOnlineActive,
-        workerBaseUrl: cartesiaWorkerUrl,
+        workerBaseUrl: workerUrl,
         installationId: installationId,
-        language: isOnlineActive ? cartesiaLanguage : 'auto',
+        language: isOnlineActive ? preferredLanguage : 'auto',
       );
 
       if (result.voiceGenderChange != null &&
@@ -508,11 +452,13 @@ class NovaProvider extends ChangeNotifier {
       await _tts.speak(
         result.message,
         onComplete: () async {
+          _processingWorkerStt = false;
           await _startWakeWordListening();
         },
-        languageOverride: isOnlineActive ? cartesiaLanguage : null,
+        languageOverride: isOnlineActive ? preferredLanguage : null,
       );
     } catch (error) {
+      _processingWorkerStt = false;
       _setError('I encountered an error while processing your request.');
       await _startWakeWordListening();
     }
@@ -528,14 +474,15 @@ class NovaProvider extends ChangeNotifier {
     state = NovaAgentState.error;
     statusMessage = '> fault :: $message';
     wakeWordListening = false;
+    _processingWorkerStt = false;
     notifyListeners();
   }
 
   @override
   void dispose() {
     _wakeWordEnabled = false;
-    _sarvamCaptureTimer?.cancel();
     _speech.dispose();
+    _workerStt.dispose();
     _tts.dispose();
     super.dispose();
   }

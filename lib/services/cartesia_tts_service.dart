@@ -11,8 +11,8 @@ class CartesiaTtsService {
     required String installationId,
     required String text,
     required String language,
-    required String voiceId,
-    required double speed,
+    required String gender,
+    double speed = 1.0,
   }) async {
     final base = workerBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$base/tts');
@@ -25,7 +25,7 @@ class CartesiaTtsService {
             'installationId': installationId,
             'text': text,
             'language': language,
-            'voiceId': voiceId,
+            'gender': gender,
             'speed': speed,
           }),
         )

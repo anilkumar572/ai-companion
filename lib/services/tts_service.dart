@@ -35,24 +35,11 @@ class TtsService {
 
   TtsEngine get engine => _engine;
 
-  String get cartesiaWorkerUrl =>
-      _prefs?.getString(NovaConstants.prefsCartesiaWorkerUrl) ??
-      NovaConstants.defaultCartesiaWorkerUrl;
+  String get workerUrl => NovaConstants.workerUrl;
 
-  String get cartesiaLanguage =>
-      _prefs?.getString(NovaConstants.prefsCartesiaLanguage) ??
-      NovaConstants.defaultCartesiaLanguage;
-
-  double get cartesiaSpeed =>
-      _prefs?.getDouble(NovaConstants.prefsCartesiaSpeed) ?? 1.0;
-
-  String get cartesiaFemaleVoiceId =>
-      _prefs?.getString(NovaConstants.prefsCartesiaFemaleVoiceId) ??
-      NovaConstants.defaultCartesiaFemaleVoiceId;
-
-  String get cartesiaMaleVoiceId =>
-      _prefs?.getString(NovaConstants.prefsCartesiaMaleVoiceId) ??
-      NovaConstants.defaultCartesiaMaleVoiceId;
+  String get preferredLanguage =>
+      _prefs?.getString(NovaConstants.prefsPreferredLanguage) ??
+      NovaConstants.defaultLanguage;
 
   String get installationId {
     final saved = _prefs?.getString(NovaConstants.prefsInstallationId);
@@ -77,40 +64,11 @@ class TtsService {
     }
   }
 
-  Future<void> updateCartesiaSettings({
-    String? workerUrl,
-    String? language,
-    double? speed,
-    String? femaleVoiceId,
-    String? maleVoiceId,
-  }) async {
-    if (workerUrl != null) {
-      await _prefs?.setString(NovaConstants.prefsCartesiaWorkerUrl, workerUrl.trim());
-    }
-    if (language != null) {
-      await _prefs?.setString(
-        NovaConstants.prefsCartesiaLanguage,
-        language.trim(),
-      );
-    }
-    if (speed != null) {
-      await _prefs?.setDouble(
-        NovaConstants.prefsCartesiaSpeed,
-        speed.clamp(0.6, 1.5),
-      );
-    }
-    if (femaleVoiceId != null) {
-      await _prefs?.setString(
-        NovaConstants.prefsCartesiaFemaleVoiceId,
-        femaleVoiceId.trim(),
-      );
-    }
-    if (maleVoiceId != null) {
-      await _prefs?.setString(
-        NovaConstants.prefsCartesiaMaleVoiceId,
-        maleVoiceId.trim(),
-      );
-    }
+  Future<void> setPreferredLanguage(String language) async {
+    await _prefs?.setString(
+      NovaConstants.prefsPreferredLanguage,
+      language.trim(),
+    );
   }
 
   Future<void> setGender(VoiceGender gender, {bool preview = false}) async {
@@ -181,12 +139,11 @@ class TtsService {
   }) async {
     try {
       final audio = await _cartesia.synthesize(
-        workerBaseUrl: cartesiaWorkerUrl,
+        workerBaseUrl: workerUrl,
         installationId: installationId,
         text: text,
-        language: languageOverride ?? cartesiaLanguage,
-        voiceId: _voiceIdForGender(_gender),
-        speed: cartesiaSpeed,
+        language: languageOverride ?? preferredLanguage,
+        gender: _gender.storageKey,
       );
 
       onStart?.call();
@@ -211,14 +168,6 @@ class TtsService {
       await _playbackCompleteSub?.cancel();
       _playbackCompleteSub = null;
     }
-  }
-
-  String _voiceIdForGender(VoiceGender gender) {
-    if (gender == VoiceGender.male) {
-      final maleId = cartesiaMaleVoiceId.trim();
-      if (maleId.isNotEmpty) return maleId;
-    }
-    return cartesiaFemaleVoiceId.trim();
   }
 
   String _previewText() {

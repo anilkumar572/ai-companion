@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../../core/constants.dart';
 import '../../core/theme/nova_theme.dart';
 import '../../models/operation_mode.dart';
-import '../../models/tts_engine.dart';
 import '../../models/voice_gender.dart';
 import '../../providers/nova_provider.dart';
 
@@ -16,87 +15,44 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late final TextEditingController _workerUrlController;
   late final TextEditingController _languageController;
-  late final TextEditingController _femaleVoiceController;
-  late final TextEditingController _maleVoiceController;
-  late final TextEditingController _sarvamApiKeyController;
-  late final TextEditingController _sarvamLanguageController;
   late final TextEditingController _localModelPathController;
-  double _speed = 1.0;
   bool _initialized = false;
 
   @override
   void initState() {
     super.initState();
-    _workerUrlController = TextEditingController();
     _languageController = TextEditingController();
-    _femaleVoiceController = TextEditingController();
-    _maleVoiceController = TextEditingController();
-    _sarvamApiKeyController = TextEditingController();
-    _sarvamLanguageController = TextEditingController();
     _localModelPathController = TextEditingController();
   }
 
   @override
   void dispose() {
-    _workerUrlController.dispose();
     _languageController.dispose();
-    _femaleVoiceController.dispose();
-    _maleVoiceController.dispose();
-    _sarvamApiKeyController.dispose();
-    _sarvamLanguageController.dispose();
     _localModelPathController.dispose();
     super.dispose();
   }
 
   void _syncControllers(NovaProvider provider) {
     if (_initialized) return;
-    _workerUrlController.text = provider.cartesiaWorkerUrl;
-    _languageController.text = provider.cartesiaLanguage;
-    _femaleVoiceController.text = provider.cartesiaFemaleVoiceId;
-    _maleVoiceController.text = provider.cartesiaMaleVoiceId;
-    _sarvamApiKeyController.text = provider.sarvamApiKey;
-    _sarvamLanguageController.text = provider.sarvamLanguage;
+    _languageController.text = provider.preferredLanguage;
     _localModelPathController.text = provider.localModelPath;
-    _speed = provider.cartesiaSpeed;
     _initialized = true;
   }
 
-  Future<void> _saveSarvamSettings(NovaProvider provider) async {
-    await provider.updateSarvamSettings(
-      apiKey: _sarvamApiKeyController.text,
-      language: _sarvamLanguageController.text,
-    );
-
+  Future<void> _saveLanguage(NovaProvider provider) async {
+    await provider.setPreferredLanguage(_languageController.text);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sarvam STT settings saved')),
+      const SnackBar(content: Text('Language preference saved')),
     );
   }
 
   Future<void> _saveOfflineSettings(NovaProvider provider) async {
     await provider.updateLocalModelPath(_localModelPathController.text);
-
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Offline settings saved')),
-    );
-  }
-
-  Future<void> _saveCartesiaSettings(NovaProvider provider) async {
-    await provider.updateCartesiaSettings(
-      workerUrl: _workerUrlController.text,
-      language: _languageController.text,
-      speed: _speed,
-      femaleVoiceId: _femaleVoiceController.text,
-      maleVoiceId: _maleVoiceController.text,
-      preview: true,
-    );
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Cartesia settings saved')),
     );
   }
 
@@ -121,8 +77,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 8),
           Text(
             provider.isOnlineActive
-                ? 'Currently online: Sarvam STT, worker chat (Gemini), and Cartesia TTS.'
-                : 'Currently offline: on-device STT, local brain, and device TTS.',
+                ? 'Online: Sarvam stream STT, worker chat (Gemini), Cartesia TTS — all keys stay on Cloudflare.'
+                : 'Offline: on-device STT, local brain, device TTS.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: NovaTheme.textMuted,
                 ),
@@ -137,9 +93,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
           _InfoCard(
-            title: 'Online stack',
+            title: 'Cloud backend',
             body:
-                'Sarvam STT for speech, buddy-ai-worker /chat for Gemini replies, and Cartesia /tts for voice output.',
+                'Worker: ${NovaConstants.workerUrl}\n'
+                'STT: wss://.../stt/ws (Sarvam stream)\n'
+                'Chat: POST /chat (Gemini)\n'
+                'TTS: POST /tts (Cartesia)\n\n'
+                'Set GOOGLE_AI_API_KEY, SARVAM_API_KEY, and CARTESIA_API_KEY as Cloudflare Worker secrets. The app stores no API keys.',
           ),
           const SizedBox(height: 16),
           Container(
@@ -155,30 +115,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Sarvam STT',
+                  'Preferred Language',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         color: NovaTheme.accent,
                       ),
                 ),
+                const SizedBox(height: 8),
+                Text(
+                  'Used for worker chat and Cartesia TTS when online.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: NovaTheme.textMuted,
+                      ),
+                ),
                 const SizedBox(height: 16),
                 _SettingsField(
-                  label: 'Sarvam API Key',
-                  controller: _sarvamApiKeyController,
-                  hint: 'Paste your Sarvam api-subscription-key',
-                  obscureText: true,
-                ),
-                const SizedBox(height: 12),
-                _SettingsField(
-                  label: 'Sarvam language_code',
-                  controller: _sarvamLanguageController,
-                  hint: 'unknown, en-IN, hi-IN, te-IN',
+                  label: 'Language',
+                  controller: _languageController,
+                  hint: 'en-IN, hi-IN, te-IN',
                 ),
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
-                    onPressed: () => _saveSarvamSettings(provider),
-                    child: const Text('Save Sarvam Settings'),
+                    onPressed: () => _saveLanguage(provider),
+                    child: const Text('Save Language'),
                   ),
                 ),
               ],
@@ -230,41 +190,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 28),
           Text(
-            'Text-to-Speech Engine',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: NovaTheme.primary,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Use device voices or Cartesia neural speech through your Cloudflare worker.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: NovaTheme.textMuted,
-                ),
-          ),
-          const SizedBox(height: 16),
-          ...TtsEngine.values.map(
-            (engine) => _EngineOptionTile(
-              engine: engine,
-              selected: provider.ttsEngine == engine,
-              onTap: () => provider.setTtsEngine(engine),
-            ),
-          ),
-          if (provider.ttsEngine == TtsEngine.cartesia) ...[
-            const SizedBox(height: 24),
-            _CartesiaSettingsCard(
-              workerUrlController: _workerUrlController,
-              languageController: _languageController,
-              femaleVoiceController: _femaleVoiceController,
-              maleVoiceController: _maleVoiceController,
-              speed: _speed,
-              installationId: provider.installationId,
-              onSpeedChanged: (value) => setState(() => _speed = value),
-              onSave: () => _saveCartesiaSettings(provider),
-            ),
-          ],
-          const SizedBox(height: 28),
-          Text(
             'Voice Profile',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: NovaTheme.primary,
@@ -272,9 +197,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            provider.ttsEngine == TtsEngine.cartesia
-                ? 'Male and female map to Cartesia voice IDs below. Nova previews the selected profile immediately.'
-                : 'Select whether Nova speaks with a male or female device voice.',
+            'Male or female. Online Cartesia voice IDs are configured on the worker.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: NovaTheme.textMuted,
                 ),
@@ -287,29 +210,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: () => provider.setVoiceGender(gender),
             ),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 16),
           _InfoCard(
-            title: 'Cartesia: Change Voice',
+            title: 'Change Cartesia voice (worker)',
             body:
-                'Copy a voice ID from the Cartesia dashboard (https://play.cartesia.ai/voices) and paste it into Female Voice ID or Male Voice ID above. Each gender uses its own voice ID.',
+                'Set CARTESIA_VOICE_ID and CARTESIA_MALE_VOICE_ID in Cloudflare Worker secrets/vars. The app only sends gender (male/female).',
           ),
           const SizedBox(height: 16),
           _InfoCard(
-            title: 'Cartesia: Change Language',
+            title: 'Change Sarvam language (worker)',
             body:
-                'Set Language to a locale code such as en-IN, hi-IN, te-IN, ta-IN, kn-IN, or mr-IN. The worker forwards this to Cartesia as locale/language for pronunciation.',
-          ),
-          const SizedBox(height: 16),
-          _InfoCard(
-            title: 'Cartesia Model',
-            body:
-                'The TTS model (for example sonic-3.6) is configured on the worker as CARTESIA_MODEL. The app sends text, voiceId, language, and speed to ${NovaConstants.defaultCartesiaWorkerUrl}/tts.',
-          ),
-          const SizedBox(height: 16),
-          _InfoCard(
-            title: 'On-Device Capabilities',
-            body:
-                'Nova can place calls, search contacts, take photos, record video, manage reminders, review your calendar, and search the web — all from voice commands.',
+                'Set SARVAM_LANGUAGE_CODE on the worker (e.g. unknown, hi-IN, te-IN). The app connects to /stt/ws and the worker proxies Sarvam streaming STT.',
           ),
         ],
       ),
@@ -375,175 +286,21 @@ class _ModeOptionTile extends StatelessWidget {
   }
 }
 
-class _EngineOptionTile extends StatelessWidget {
-  const _EngineOptionTile({
-    required this.engine,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final TtsEngine engine;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-          decoration: BoxDecoration(
-            color: selected
-                ? NovaTheme.primary.withValues(alpha: 0.12)
-                : NovaTheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: selected
-                  ? NovaTheme.primary
-                  : NovaTheme.textMuted.withValues(alpha: 0.2),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                engine == TtsEngine.cartesia ? Icons.cloud : Icons.phone_android,
-                color: selected ? NovaTheme.primary : NovaTheme.textMuted,
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  engine.label,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ),
-              if (selected)
-                const Icon(Icons.check_circle, color: NovaTheme.primary),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CartesiaSettingsCard extends StatelessWidget {
-  const _CartesiaSettingsCard({
-    required this.workerUrlController,
-    required this.languageController,
-    required this.femaleVoiceController,
-    required this.maleVoiceController,
-    required this.speed,
-    required this.installationId,
-    required this.onSpeedChanged,
-    required this.onSave,
-  });
-
-  final TextEditingController workerUrlController;
-  final TextEditingController languageController;
-  final TextEditingController femaleVoiceController;
-  final TextEditingController maleVoiceController;
-  final double speed;
-  final String installationId;
-  final ValueChanged<double> onSpeedChanged;
-  final VoidCallback onSave;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: NovaTheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: NovaTheme.textMuted.withValues(alpha: 0.15)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Cartesia Settings',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: NovaTheme.accent,
-                ),
-          ),
-          const SizedBox(height: 16),
-          _SettingsField(
-            label: 'Worker URL',
-            controller: workerUrlController,
-            hint: NovaConstants.defaultCartesiaWorkerUrl,
-          ),
-          const SizedBox(height: 12),
-          _SettingsField(
-            label: 'Language',
-            controller: languageController,
-            hint: 'en-IN',
-          ),
-          const SizedBox(height: 12),
-          _SettingsField(
-            label: 'Female Voice ID',
-            controller: femaleVoiceController,
-            hint: NovaConstants.defaultCartesiaFemaleVoiceId,
-          ),
-          const SizedBox(height: 12),
-          _SettingsField(
-            label: 'Male Voice ID',
-            controller: maleVoiceController,
-            hint: 'Paste a male voice ID from Cartesia',
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Speed: ${speed.toStringAsFixed(2)}',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          Slider(
-            value: speed,
-            min: 0.6,
-            max: 1.5,
-            divisions: 18,
-            activeColor: NovaTheme.primary,
-            onChanged: onSpeedChanged,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Installation ID: $installationId',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: NovaTheme.textMuted,
-                ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: onSave,
-              child: const Text('Save & Preview Cartesia'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _SettingsField extends StatelessWidget {
   const _SettingsField({
     required this.label,
     required this.controller,
     required this.hint,
-    this.obscureText = false,
   });
 
   final String label;
   final TextEditingController controller;
   final String hint;
-  final bool obscureText;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
-      obscureText: obscureText,
       style: Theme.of(context).textTheme.bodyMedium,
       decoration: InputDecoration(
         labelText: label,
