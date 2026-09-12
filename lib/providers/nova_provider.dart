@@ -20,7 +20,7 @@ class NovaProvider extends ChangeNotifier {
     return NovaProvider._(
       prefs: prefs,
       speech: SpeechService(),
-      tts: TtsService(),
+      tts: TtsService(prefs: prefs),
       agent: NovaAgent(
         reminders: reminders,
         calendar: calendar,
@@ -77,9 +77,14 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> setVoiceGender(VoiceGender gender) async {
+    if (voiceGender == gender) {
+      await _tts.setGender(gender, preview: true);
+      return;
+    }
+
     voiceGender = gender;
     await _prefs.setString(NovaConstants.prefsVoiceGender, gender.storageKey);
-    await _tts.setGender(gender);
+    await _tts.setGender(gender, preview: true);
     notifyListeners();
   }
 
@@ -129,14 +134,25 @@ class NovaProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await _agent.respond(transcript);
-      lastResponse = response;
+      final result = await _agent.respond(transcript);
+
+      if (result.voiceGenderChange != null &&
+          result.voiceGenderChange != voiceGender) {
+        voiceGender = result.voiceGenderChange!;
+        await _prefs.setString(
+          NovaConstants.prefsVoiceGender,
+          voiceGender.storageKey,
+        );
+        await _tts.setGender(voiceGender);
+      }
+
+      lastResponse = result.message;
       state = NovaAgentState.speaking;
       statusMessage = 'Nova is responding…';
       notifyListeners();
 
       await _tts.speak(
-        response,
+        result.message,
         onComplete: () {
           state = NovaAgentState.idle;
           statusMessage = 'Tap the orb to speak with Nova.';

@@ -1,6 +1,8 @@
 import 'package:intl/intl.dart';
 
 import '../core/constants.dart';
+import '../models/agent_result.dart';
+import '../models/voice_gender.dart';
 import 'calendar_service.dart';
 import 'reminder_service.dart';
 import 'web_search_service.dart';
@@ -18,53 +20,217 @@ class NovaAgent {
   final CalendarService _calendar;
   final WebSearchService _webSearch;
 
-  Future<String> respond(String input) async {
-    final text = input.trim();
+  Future<AgentResult> respond(String input) async {
+    final text = _cleanInput(input);
     if (text.isEmpty) {
-      return 'I did not receive any input. Please speak again when you are ready.';
+      return const AgentResult(
+        message:
+            'I did not receive any input. Please speak again when you are ready.',
+      );
     }
 
     final normalized = text.toLowerCase();
 
-    if (_containsAny(normalized, ['hello', 'hi nova', 'good morning', 'good evening'])) {
-      return _greeting();
-    }
-
-    if (_containsAny(normalized, ['who are you', 'what are you', 'your name'])) {
-      return 'I am ${NovaConstants.appName}, your formal voice companion. I am prepared to assist with reminders, calendar summaries, and web search.';
-    }
-
-    if (_containsAny(normalized, ['calendar', 'schedule', 'appointment', 'meeting today'])) {
-      return _calendar.summarizeToday();
-    }
-
-    if (_containsAny(normalized, ['remind me', 'set a reminder', 'reminder'])) {
-      return _handleReminder(text);
-    }
-
-    if (_containsAny(normalized, ['my reminders', 'upcoming reminders', 'list reminders'])) {
-      return _listReminders();
-    }
-
-    if (_containsAny(normalized, ['search', 'look up', 'find online', 'web search'])) {
-      final query = _extractAfterKeywords(
-        text,
-        ['search for', 'look up', 'find online', 'web search for', 'search'],
+    final voiceChange = _detectVoiceChange(normalized);
+    if (voiceChange != null) {
+      return AgentResult(
+        message: voiceChange.message,
+        voiceGenderChange: voiceChange.gender,
       );
-      if (query.isEmpty) {
-        return 'Please specify what you would like me to search for.';
-      }
-      final result = await _webSearch.search(query);
-      return result;
     }
 
-    if (_containsAny(normalized, ['time', 'what time'])) {
+    if (_containsAny(normalized, [
+      'hello',
+      'hi nova',
+      'hey nova',
+      'good morning',
+      'good afternoon',
+      'good evening',
+    ])) {
+      return AgentResult(message: _greeting());
+    }
+
+    if (_containsAny(normalized, [
+      'who are you',
+      'what are you',
+      'your name',
+      'introduce yourself',
+    ])) {
+      return AgentResult(
+        message:
+            'I am ${NovaConstants.appName}, your formal voice companion. I can answer questions, search the web, review your calendar, and manage reminders.',
+      );
+    }
+
+    if (_containsAny(normalized, [
+      'calendar',
+      'schedule',
+      'appointment',
+      'meeting today',
+      'events today',
+      'what do i have today',
+    ])) {
+      return AgentResult(message: await _calendar.summarizeToday());
+    }
+
+    if (_containsAny(normalized, ['remind me', 'set a reminder', 'create reminder'])) {
+      return AgentResult(message: await _handleReminder(text));
+    }
+
+    if (_containsAny(normalized, [
+      'my reminders',
+      'upcoming reminders',
+      'list reminders',
+      'show reminders',
+    ])) {
+      return AgentResult(message: _listReminders());
+    }
+
+    if (_containsAny(normalized, [
+      'what time',
+      'current time',
+      'tell me the time',
+    ])) {
       final now = DateTime.now();
       final formatter = DateFormat('h:mm a, EEEE, MMMM d');
-      return 'The current time is ${formatter.format(now)}.';
+      return AgentResult(message: 'The current time is ${formatter.format(now)}.');
     }
 
-    return 'Understood. I am configured for voice assistance with reminders, calendar review, and web search. Please state a specific command, such as "Nova, what is on my calendar today?" or "Nova, remind me to call the client at 3 PM."';
+    if (_containsAny(normalized, [
+      'what date',
+      'today\'s date',
+      'what day is it',
+    ])) {
+      final formatter = DateFormat('EEEE, MMMM d, yyyy');
+      return AgentResult(
+        message: 'Today is ${formatter.format(DateTime.now())}.',
+      );
+    }
+
+    if (_looksLikeSearchCommand(normalized)) {
+      final query = _extractSearchQuery(text, normalized);
+      final result = await _webSearch.search(query);
+      return AgentResult(message: result);
+    }
+
+    if (_looksLikeQuestion(normalized)) {
+      final result = await _webSearch.search(text);
+      return AgentResult(message: result);
+    }
+
+    final fallbackSearch = await _webSearch.search(text);
+    if (!fallbackSearch.contains('could not find reliable information')) {
+      return AgentResult(message: fallbackSearch);
+    }
+
+    return AgentResult(
+      message:
+          'I am ready to help. You may ask me a question, request a web search, set a reminder, or ask about your calendar.',
+    );
+  }
+
+  String _cleanInput(String input) {
+    final trimmed = input.trim();
+    final greetingOnly = RegExp(
+      r'^\s*(hey|hi|hello)\s+n[o0]va\s*[.!]?\s*$',
+      caseSensitive: false,
+    );
+    if (greetingOnly.hasMatch(trimmed)) {
+      return 'hello';
+    }
+
+    var text = trimmed.replaceFirst(
+      RegExp(r'^\s*n[o0]va[,.!\s]+', caseSensitive: false),
+      '',
+    );
+    return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  _VoiceChange? _detectVoiceChange(String normalized) {
+    final wantsFemale = _containsAny(normalized, [
+      'female voice',
+      'woman voice',
+      'use female',
+      'switch to female',
+      'change to female',
+      'change voice to female',
+    ]) ||
+        RegExp(r'\bfemale\b').hasMatch(normalized);
+
+    final wantsMale = !wantsFemale &&
+        (_containsAny(normalized, [
+              'male voice',
+              'man voice',
+              'use male',
+              'switch to male',
+              'change to male',
+              'change voice to male',
+            ]) ||
+            RegExp(r'\bmale\b').hasMatch(normalized));
+
+    if (wantsFemale) {
+      return _VoiceChange(
+        gender: VoiceGender.female,
+        message: 'Voice profile updated. I will now speak with a female voice.',
+      );
+    }
+
+    if (wantsMale) {
+      return _VoiceChange(
+        gender: VoiceGender.male,
+        message: 'Voice profile updated. I will now speak with a male voice.',
+      );
+    }
+    return null;
+  }
+
+  bool _looksLikeSearchCommand(String normalized) {
+    return _containsAny(normalized, [
+      'search for',
+      'search about',
+      'search ',
+      'look up',
+      'find online',
+      'web search',
+      'google ',
+      'tell me about',
+    ]);
+  }
+
+  bool _looksLikeQuestion(String normalized) {
+    return normalized.startsWith('what ') ||
+        normalized.startsWith('who ') ||
+        normalized.startsWith('where ') ||
+        normalized.startsWith('when ') ||
+        normalized.startsWith('why ') ||
+        normalized.startsWith('how ') ||
+        normalized.startsWith('is ') ||
+        normalized.startsWith('are ') ||
+        normalized.startsWith('can ') ||
+        normalized.contains('what is') ||
+        normalized.contains('who is') ||
+        normalized.contains('tell me');
+  }
+
+  String _extractSearchQuery(String text, String normalized) {
+    const prefixes = [
+      'search for',
+      'search about',
+      'look up',
+      'find online',
+      'web search for',
+      'google',
+      'tell me about',
+      'search',
+    ];
+
+    for (final prefix in prefixes) {
+      final index = normalized.indexOf(prefix);
+      if (index != -1) {
+        return text.substring(index + prefix.length).trim();
+      }
+    }
+    return text.trim();
   }
 
   String _greeting() {
@@ -161,18 +327,17 @@ class NovaAgent {
     return candidate;
   }
 
-  String _extractAfterKeywords(String text, List<String> keywords) {
-    final lower = text.toLowerCase();
-    for (final keyword in keywords) {
-      final index = lower.indexOf(keyword);
-      if (index != -1) {
-        return text.substring(index + keyword.length).trim();
-      }
-    }
-    return text.trim();
-  }
-
   bool _containsAny(String text, List<String> terms) {
     return terms.any(text.contains);
   }
+}
+
+class _VoiceChange {
+  const _VoiceChange({
+    required this.gender,
+    required this.message,
+  });
+
+  final VoiceGender gender;
+  final String message;
 }

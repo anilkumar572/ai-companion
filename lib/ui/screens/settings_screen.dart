@@ -28,7 +28,7 @@ class SettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Select whether Nova speaks with a male or female voice.',
+            'Select whether Nova speaks with a male or female voice. Nova will preview the selected voice immediately.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: NovaTheme.textMuted,
                 ),

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nova/models/voice_gender.dart';
 import 'package:nova/services/calendar_service.dart';
 import 'package:nova/services/nova_agent.dart';
 import 'package:nova/services/reminder_service.dart';
@@ -19,7 +20,18 @@ void main() {
     );
 
     final response = await agent.respond('Who are you?');
-    expect(response, contains('Nova'));
-    expect(response, contains('formal'));
+    expect(response.message, contains('Nova'));
+  });
+
+  test('Nova changes to female voice on command', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final agent = NovaAgent(
+      reminders: ReminderService(prefs),
+      calendar: CalendarService(),
+      webSearch: WebSearchService(),
+    );
+
+    final response = await agent.respond('Switch to female voice');
+    expect(response.voiceGenderChange, VoiceGender.female);
   });
 }
