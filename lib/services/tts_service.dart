@@ -15,13 +15,10 @@ class TtsService {
   TtsService({
     SharedPreferences? prefs,
     CartesiaTtsService? cartesia,
-    AudioPlayer? audioPlayer,
   })  : _prefs = prefs,
-        _cartesia = cartesia ?? const CartesiaTtsService(),
-        _audioPlayer = audioPlayer ?? AudioPlayer();
+        _cartesia = cartesia ?? const CartesiaTtsService();
 
   final CartesiaTtsService _cartesia;
-  final AudioPlayer _audioPlayer;
   final SharedPreferences? _prefs;
 
   VoiceGender _gender = VoiceGender.female;
@@ -44,9 +41,6 @@ class TtsService {
   Future<void> initialize({VoiceGender gender = VoiceGender.female}) async {
     _gender = gender;
     await _configurePlaybackAudio();
-    await _audioPlayer.setPlayerMode(PlayerMode.mediaPlayer);
-    await _audioPlayer.setReleaseMode(ReleaseMode.stop);
-    await _audioPlayer.setVolume(1.0);
     _initialized = true;
   }
 
@@ -58,7 +52,7 @@ class TtsService {
           stayAwake: true,
           contentType: AndroidContentType.speech,
           usageType: AndroidUsageType.media,
-          audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+          audioFocus: AndroidAudioFocus.gain,
         ),
         iOS: AudioContextIOS(
           category: AVAudioSessionCategory.playback,
@@ -104,9 +98,7 @@ class TtsService {
       return;
     }
 
-    await stop();
-    // Give Android time to release the microphone after recording.
-    await Future<void>.delayed(const Duration(milliseconds: 450));
+    await Future<void>.delayed(const Duration(milliseconds: 900));
     await _configurePlaybackAudio();
 
     final audio = await _cartesia.synthesize(
@@ -117,57 +109,86 @@ class TtsService {
       gender: _gender.storageKey,
     );
 
-    String? tempPath;
-    try {
-      final source = await _buildPlaybackSource(audio);
-      if (source is DeviceFileSource) {
-        tempPath = source.path;
-      }
+    onStart?.call();
 
-      onStart?.call();
-      await _audioPlayer.play(source);
-      await _audioPlayer.onPlayerComplete.first.timeout(
-        const Duration(seconds: 120),
-        onTimeout: () => throw TimeoutException('Voice playback timed out'),
-      );
+    final tempPath = await _writeTempWav(audio);
+    try {
+      await _playFile(tempPath);
       onComplete?.call();
-    } on CartesiaTtsException {
-      rethrow;
-    } on TimeoutException {
-      rethrow;
-    } catch (error) {
-      throw TtsPlaybackException(
-        'Could not play the voice reply on this device.',
-        cause: error,
-      );
     } finally {
-      if (tempPath != null && tempPath.isNotEmpty) {
-        unawaited(File(tempPath).delete());
-      }
+      unawaited(File(tempPath).delete());
     }
   }
 
-  Future<Source> _buildPlaybackSource(Uint8List audio) async {
-    if (kIsWeb) {
-      return BytesSource(audio, mimeType: 'audio/wav');
-    }
+  Future<void> _playFile(String path) async {
+    final player = AudioPlayer();
+    try {
+      await player.setPlayerMode(PlayerMode.mediaPlayer);
+      await player.setReleaseMode(ReleaseMode.stop);
+      await player.setVolume(1.0);
 
+      await player.setSource(DeviceFileSource(path, mimeType: 'audio/wav'));
+      await player.resume();
+
+      await _waitForPlayback(player);
+    } finally {
+      try {
+        await player.stop();
+      } catch (_) {}
+      try {
+        await player.dispose();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _waitForPlayback(AudioPlayer player) async {
+    Duration? totalDuration;
+    final durationSub = player.onDurationChanged.listen((duration) {
+      totalDuration = duration;
+    });
+
+    try {
+      final deadline = DateTime.now().add(const Duration(seconds: 120));
+      while (DateTime.now().isBefore(deadline)) {
+        final state = player.state;
+        if (state == PlayerState.completed) {
+          return;
+        }
+
+        final position = await player.getCurrentPosition();
+        final duration = totalDuration ?? await player.getDuration();
+
+        if (duration != null &&
+            position != null &&
+            duration.inMilliseconds > 0 &&
+            position.inMilliseconds >= duration.inMilliseconds - 150) {
+          return;
+        }
+
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+
+      throw TimeoutException('Voice playback timed out');
+    } finally {
+      await durationSub.cancel();
+    }
+  }
+
+  Future<String> _writeTempWav(Uint8List audio) async {
     final directory = await getTemporaryDirectory();
     final path =
         '${directory.path}/nova_tts_${DateTime.now().millisecondsSinceEpoch}.wav';
     final file = File(path);
     await file.writeAsBytes(audio, flush: true);
-    return DeviceFileSource(path, mimeType: 'audio/wav');
+    if (!await file.exists() || await file.length() < 44) {
+      throw TtsPlaybackException('Voice audio file could not be prepared.');
+    }
+    return path;
   }
 
-  Future<void> stop() async {
-    await _audioPlayer.stop();
-  }
+  Future<void> stop() async {}
 
-  Future<void> dispose() async {
-    await stop();
-    await _audioPlayer.dispose();
-  }
+  Future<void> dispose() async {}
 
   String _previewText() {
     return _gender == VoiceGender.male

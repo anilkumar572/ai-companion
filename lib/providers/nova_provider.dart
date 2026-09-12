@@ -379,6 +379,15 @@ class NovaProvider extends ChangeNotifier {
       );
     } catch (error) {
       _processingTranscript = false;
+      if (lastResponse.isNotEmpty) {
+        state = NovaAgentState.idle;
+        statusMessage =
+            'Reply is shown above. Voice could not play — check media volume.';
+        errorMessage = null;
+        notifyListeners();
+        return;
+      }
+
       final message = switch (error) {
         CartesiaTtsException() =>
           'Voice synthesis failed. Check your internet connection and try again.',
