@@ -92,7 +92,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   NovaOrb(
                     state: provider.state,
                     audioLevel: provider.audioLevel,
-                    wakeWordListening: provider.wakeWordListening,
                     onTap: _handleOrbTap,
                   ),
                   const SizedBox(height: 24),
@@ -103,13 +102,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     lastResponse: provider.lastResponse,
                     mediaPath: provider.lastMediaPath,
                     isVideo: provider.lastMediaIsVideo,
-                    wakeWordListening: provider.wakeWordListening,
                   ),
                   const Spacer(),
-                  _BottomHint(
-                    state: provider.state,
-                    wakeWordListening: provider.wakeWordListening,
-                  ),
+                  _BottomHint(state: provider.state),
                   const SizedBox(height: 16),
                 ],
               ),
@@ -173,24 +168,18 @@ class _ModeChip extends StatelessWidget {
 }
 
 class _BottomHint extends StatelessWidget {
-  const _BottomHint({
-    required this.state,
-    required this.wakeWordListening,
-  });
+  const _BottomHint({required this.state});
 
   final NovaAgentState state;
-  final bool wakeWordListening;
 
   @override
   Widget build(BuildContext context) {
     final hint = switch (state) {
-      NovaAgentState.idle when wakeWordListening =>
-        'Say "Nova" or tap the orb to speak',
-      NovaAgentState.idle => 'Tap the orb to start a conversation',
-      NovaAgentState.listening => 'Listening… tap the orb when you are done',
+      NovaAgentState.idle => 'Tap the orb to speak',
+      NovaAgentState.listening => 'Speak now — tap the orb when finished',
       NovaAgentState.thinking => 'Thinking through your request',
-      NovaAgentState.speaking => 'Tap the orb to interrupt',
-      NovaAgentState.error => 'Check microphone permissions and try again',
+      NovaAgentState.speaking => 'Tap the orb to stop speaking',
+      NovaAgentState.error => 'Tap the orb to try again',
     };
 
     return Text(

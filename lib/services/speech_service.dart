@@ -49,19 +49,6 @@ class SpeechService {
     );
   }
 
-  Future<void> startWakeWordListening({
-    required void Function(String transcript, bool isFinal) onResult,
-    void Function(double level)? onSoundLevel,
-  }) {
-    return startListening(
-      onResult: onResult,
-      onSoundLevel: onSoundLevel,
-      listenFor: const Duration(minutes: 5),
-      pauseFor: const Duration(seconds: 2),
-      onDevice: true,
-    );
-  }
-
   Future<void> stopListening() async {
     if (_speech.isListening) {
       await _speech.stop();
