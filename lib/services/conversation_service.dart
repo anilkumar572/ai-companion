@@ -37,7 +37,7 @@ class ConversationService {
         message: input,
         language: language,
         personality: 'formal',
-        robotName: 'Nova',
+        robotName: NovaConstants.appName,
         conversationContext: _cloudHistory,
       );
 

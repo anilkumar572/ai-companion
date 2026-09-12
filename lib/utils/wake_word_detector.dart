@@ -1,5 +1,10 @@
+import '../core/constants.dart';
+
 class WakeWordDetector {
-  static final RegExp _wakeWord = RegExp(r'\bn[o0]va\b', caseSensitive: false);
+  static final RegExp _wakeWord = RegExp(
+    r'\bt[e3]ju\b',
+    caseSensitive: false,
+  );
 
   static bool containsWakeWord(String text) {
     return _wakeWord.hasMatch(text.trim());
@@ -25,4 +30,6 @@ class WakeWordDetector {
     if (command.isEmpty) return isFinal;
     return isFinal || command.split(RegExp(r'\s+')).length >= 2;
   }
+
+  static String wakeWordHint() => '"${NovaConstants.wakeWord}"';
 }

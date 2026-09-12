@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/constants.dart';
+import '../../utils/wake_word_detector.dart';
 import '../../core/theme/nova_theme.dart';
 import '../../models/nova_state.dart';
 import '../../providers/nova_provider.dart';
@@ -108,23 +109,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           height: 1.4,
                         ),
                   ).animate().fadeIn(duration: 500.ms),
-                  const Spacer(),
+                  const SizedBox(height: 16),
                   NovaOrb(
                     state: provider.state,
                     audioLevel: provider.audioLevel,
                     wakeWordListening: provider.wakeWordListening,
                     onTap: _handleOrbTap,
                   ),
-                  const SizedBox(height: 24),
-                  StatusHud(
-                    state: provider.state,
-                    statusMessage: provider.statusMessage,
-                    liveTranscript: provider.liveTranscript,
-                    lastResponse: provider.lastResponse,
-                    mediaPath: provider.lastMediaPath,
-                    isVideo: provider.lastMediaIsVideo,
+                  const SizedBox(height: 20),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: StatusHud(
+                        state: provider.state,
+                        statusMessage: provider.statusMessage,
+                        liveTranscript: provider.liveTranscript,
+                        lastResponse: provider.lastResponse,
+                        mediaPath: provider.lastMediaPath,
+                        isVideo: provider.lastMediaIsVideo,
+                      ),
+                    ),
                   ),
-                  const Spacer(),
+                  const SizedBox(height: 12),
                   _BottomHint(
                     state: provider.state,
                     wakeWordEnabled: provider.wakeWordEnabled,
@@ -172,10 +178,11 @@ class _BottomHint extends StatelessWidget {
     final hint = switch (state) {
       NovaAgentState.idle => wakeWordEnabled
           ? wakeWordListening
-              ? 'Listening for "Nova" — or tap the orb'
-              : 'Say "Nova" to speak — or tap the orb'
+              ? 'Listening for ${WakeWordDetector.wakeWordHint()} — or tap the orb'
+              : 'Say ${WakeWordDetector.wakeWordHint()} to speak — or tap the orb'
           : 'Tap the orb to speak',
-      NovaAgentState.listening => 'Speak now — tap the orb when finished',
+      NovaAgentState.listening =>
+        'Speak your command now — or tap the orb when finished',
       NovaAgentState.thinking => 'Thinking through your request',
       NovaAgentState.speaking => 'Tap the orb to stop speaking',
       NovaAgentState.error => 'Tap the orb to try again',

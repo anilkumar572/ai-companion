@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
+import '../../core/constants.dart';
 import '../../core/theme/nova_theme.dart';
 import '../../models/nova_state.dart';
 
@@ -48,7 +49,7 @@ class StatusHud extends StatelessWidget {
         if (lastResponse.isNotEmpty) ...[
           const SizedBox(height: 10),
           _GlassPanel(
-            title: 'Nova',
+            title: NovaConstants.appName,
             content: lastResponse,
             accent: NovaTheme.primary,
           ),
@@ -216,12 +217,17 @@ class _GlassPanel extends StatelessWidget {
                     ),
               ),
               const SizedBox(height: 8),
-              Text(
-                content,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: NovaTheme.textPrimary.withValues(alpha: 0.92),
-                      height: 1.55,
-                    ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: SingleChildScrollView(
+                  child: Text(
+                    content,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: NovaTheme.textPrimary.withValues(alpha: 0.92),
+                          height: 1.55,
+                        ),
+                  ),
+                ),
               ),
             ],
           ),

@@ -20,10 +20,10 @@ void main() {
     );
   }
 
-  test('Nova greets formally', () async {
+  test('Teju greets formally', () async {
     final prefs = await SharedPreferences.getInstance();
-    final response = await buildAgent(prefs).respond('Hello Nova');
-    expect(response.message.toLowerCase(), contains('nova'));
+    final response = await buildAgent(prefs).respond('Hello Teju');
+    expect(response.message.toLowerCase(), contains('teju'));
   });
 
   test('Nova creates reminders from voice commands', () async {

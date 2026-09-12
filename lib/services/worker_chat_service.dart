@@ -11,7 +11,7 @@ class WorkerChatService {
     required String message,
     String language = 'auto',
     String personality = 'formal',
-    String robotName = 'Nova',
+    String robotName = 'Teju',
     bool webSearchEnabled = true,
     List<WorkerChatTurn> conversationContext = const [],
     List<String> memoryNotes = const [],

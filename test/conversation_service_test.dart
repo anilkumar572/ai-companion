@@ -27,13 +27,13 @@ void main() {
   test('device commands stay local', () async {
     final service = await buildService();
     final result = await service.respond(
-      input: 'Hello Nova',
+      input: 'Hello Teju',
       workerBaseUrl: 'https://example.com',
       installationId: 'test-installation',
     );
 
     expect(result.deferToCloud, isFalse);
-    expect(result.message.toLowerCase(), contains('nova'));
+    expect(result.message.toLowerCase(), contains('teju'));
   });
 
   test('open chat uses cloud fallback message when worker is unavailable', () async {

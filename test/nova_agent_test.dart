@@ -11,7 +11,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  test('Nova identifies itself formally', () async {
+  test('Teju identifies itself formally', () async {
     final prefs = await SharedPreferences.getInstance();
     final agent = NovaAgent(
       reminders: ReminderService(prefs),
@@ -20,10 +20,10 @@ void main() {
     );
 
     final response = await agent.respond('Who are you?');
-    expect(response.message, contains('Nova'));
+    expect(response.message, contains('Teju'));
   });
 
-  test('Hey Nova with a question defers to cloud', () async {
+  test('Hey Teju with a question defers to cloud', () async {
     final prefs = await SharedPreferences.getInstance();
     final agent = NovaAgent(
       reminders: ReminderService(prefs),
@@ -32,7 +32,7 @@ void main() {
     );
 
     final response = await agent.respond(
-      'Hey Nova, how are you?',
+      'Hey Teju, how are you?',
       allowCloudDeferral: true,
     );
 
@@ -47,9 +47,9 @@ void main() {
       webSearch: WebSearchService(),
     );
 
-    final response = await agent.respond('Hey Nova');
+    final response = await agent.respond('Hey Teju');
     expect(response.deferToCloud, isFalse);
-    expect(response.message, contains('Nova is online'));
+    expect(response.message, contains('Teju is online'));
   });
 
   test('Nova changes to female voice on command', () async {

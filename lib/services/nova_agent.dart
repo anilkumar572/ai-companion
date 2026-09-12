@@ -385,11 +385,14 @@ class NovaAgent {
   String _cleanInput(String input) {
     var text = input.trim();
     text = text.replaceFirst(
-      RegExp(r'^\s*(hey|hi|hello)\s+n[o0]va[,.!\s]*', caseSensitive: false),
+      RegExp(
+        r'^\s*(hey|hi|hello)\s+t[e3]ju[,.!\s]*',
+        caseSensitive: false,
+      ),
       '',
     );
     text = text.replaceFirst(
-      RegExp(r'^\s*n[o0]va[,.!\s]+', caseSensitive: false),
+      RegExp(r'^\s*t[e3]ju[,.!\s]+', caseSensitive: false),
       '',
     );
     return text.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -398,7 +401,7 @@ class NovaAgent {
   bool _isPureGreeting(String normalized) {
     if (normalized.isEmpty) return true;
     return RegExp(
-      r'^(hi|hello|hey|good morning|good afternoon|good evening)(\s+n[o0]va)?[!.]?\s*$',
+      r'^(hi|hello|hey|good morning|good afternoon|good evening)(\s+t[e3]ju)?[!.]?\s*$',
       caseSensitive: false,
     ).hasMatch(normalized);
   }
