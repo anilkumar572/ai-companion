@@ -9,6 +9,7 @@ Cloudflare Worker backend for Nova. **All API keys live here — never in the mo
 | `/health` | GET | Health check |
 | `/chat` | POST | Gemini / Llama chat |
 | `/tts` | POST | Cartesia speech (voice IDs from env) |
+| `/stt` | POST | Sarvam REST STT proxy (recommended for mobile) |
 | `/stt/ws` | WebSocket | Sarvam streaming STT proxy |
 
 ## Secrets (set on Cloudflare)
