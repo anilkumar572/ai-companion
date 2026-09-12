@@ -5,6 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
+import '../models/agent_result.dart';
 import '../models/nova_state.dart';
 import '../models/voice_gender.dart';
 import '../services/audio_recording_service.dart';
@@ -354,8 +355,9 @@ class NovaProvider extends ChangeNotifier {
     statusMessage = 'Thinking…';
     notifyListeners();
 
+    AgentResult? result;
     try {
-      final result = await _conversation.respond(
+      result = await _conversation.respond(
         input: transcript,
         workerBaseUrl: workerUrl,
         installationId: installationId,
@@ -372,15 +374,19 @@ class NovaProvider extends ChangeNotifier {
         await _tts.setGender(voiceGender);
       }
 
-      lastResponse = result.message;
-      lastMediaPath = result.mediaPath;
-      lastMediaIsVideo = result.isVideo;
       state = NovaAgentState.speaking;
-      statusMessage = 'Speaking…';
+      statusMessage = 'Preparing voice…';
       notifyListeners();
 
       await _tts.speak(
         result.message,
+        onStart: () {
+          lastResponse = result!.message;
+          lastMediaPath = result.mediaPath;
+          lastMediaIsVideo = result.isVideo;
+          statusMessage = 'Speaking…';
+          notifyListeners();
+        },
         onComplete: () async {
           _processingTranscript = false;
           await _enterIdle();
@@ -389,7 +395,10 @@ class NovaProvider extends ChangeNotifier {
       );
     } catch (error) {
       _processingTranscript = false;
-      if (lastResponse.isNotEmpty) {
+      if (result != null && result.message.isNotEmpty) {
+        lastResponse = result.message;
+        lastMediaPath = result.mediaPath;
+        lastMediaIsVideo = result.isVideo;
         state = NovaAgentState.idle;
         statusMessage =
             'Reply is shown above. Voice could not play — check media volume.';
