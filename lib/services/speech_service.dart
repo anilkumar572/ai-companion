@@ -58,8 +58,9 @@ class SpeechService {
 
     final resolvedLocale = await _resolveLocaleId(localeId);
     final attempts = <_ListenAttempt>[
-      _ListenAttempt(localeId: resolvedLocale, onDevice: false),
-      if (resolvedLocale != null) _ListenAttempt(localeId: null, onDevice: false),
+      _ListenAttempt(localeId: null, onDevice: false),
+      if (resolvedLocale != null)
+        _ListenAttempt(localeId: resolvedLocale, onDevice: false),
       if (resolvedLocale != null)
         _ListenAttempt(localeId: resolvedLocale, onDevice: true),
     ];
@@ -69,7 +70,9 @@ class SpeechService {
         onResult: (SpeechRecognitionResult result) {
           onResult(result.recognizedWords, result.finalResult);
         },
-        onSoundLevelChange: onSoundLevel,
+        onSoundLevelChange: onSoundLevel == null
+            ? null
+            : (level) => onSoundLevel(_normalizeSoundLevel(level)),
         listenOptions: SpeechListenOptions(
           listenMode: ListenMode.dictation,
           partialResults: true,
@@ -144,6 +147,10 @@ class SpeechService {
 
   String _normalizeLocale(String locale) =>
       locale.trim().replaceAll('_', '-').toLowerCase();
+
+  double _normalizeSoundLevel(double decibels) {
+    return ((decibels + 45) / 35).clamp(0.0, 1.0);
+  }
 
   String _formatError(SpeechRecognitionError error) {
     final message = error.errorMsg;
