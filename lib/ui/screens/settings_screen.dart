@@ -43,9 +43,9 @@ class SettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 28),
           _InfoCard(
-            title: 'Capabilities',
+            title: 'On-Device Capabilities',
             body:
-                'Nova supports voice-only interaction with reminders, calendar summaries, and web search. Interaction is formal and concise by design.',
+                'Nova can place calls, search contacts, take photos, record video, manage reminders, review your calendar, and search the web — all from voice commands.',
           ),
           const SizedBox(height: 16),
           _InfoCard(

@@ -84,6 +84,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     statusMessage: provider.statusMessage,
                     liveTranscript: provider.liveTranscript,
                     lastResponse: provider.lastResponse,
+                    mediaPath: provider.lastMediaPath,
+                    isVideo: provider.lastMediaIsVideo,
                   ),
                   const Spacer(),
                   _BottomHint(state: provider.state),

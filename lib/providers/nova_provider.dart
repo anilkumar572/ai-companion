@@ -6,7 +6,10 @@ import '../core/constants.dart';
 import '../models/nova_state.dart';
 import '../models/voice_gender.dart';
 import '../services/calendar_service.dart';
+import '../services/camera_service.dart';
+import '../services/contacts_service.dart';
 import '../services/nova_agent.dart';
+import '../services/phone_service.dart';
 import '../services/reminder_service.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
@@ -17,6 +20,9 @@ class NovaProvider extends ChangeNotifier {
     final reminders = ReminderService(prefs);
     final calendar = CalendarService();
     final webSearch = WebSearchService();
+    final camera = CameraService();
+    final contacts = ContactsService();
+    final phone = PhoneService();
     return NovaProvider._(
       prefs: prefs,
       speech: SpeechService(),
@@ -25,6 +31,9 @@ class NovaProvider extends ChangeNotifier {
         reminders: reminders,
         calendar: calendar,
         webSearch: webSearch,
+        camera: camera,
+        contacts: contacts,
+        phone: phone,
       ),
     );
   }
@@ -49,6 +58,8 @@ class NovaProvider extends ChangeNotifier {
   String statusMessage = 'Tap the orb to speak with Nova.';
   String liveTranscript = '';
   String lastResponse = '';
+  String? lastMediaPath;
+  bool lastMediaIsVideo = false;
   double audioLevel = 0.0;
   bool isBootstrapped = false;
   String? errorMessage;
@@ -147,6 +158,8 @@ class NovaProvider extends ChangeNotifier {
       }
 
       lastResponse = result.message;
+      lastMediaPath = result.mediaPath;
+      lastMediaIsVideo = result.isVideo;
       state = NovaAgentState.speaking;
       statusMessage = 'Nova is responding…';
       notifyListeners();

@@ -11,6 +11,9 @@ Nova is a formal, voice-only AI companion for **Android and iOS**, built with Fl
 - Web search for general questions
 - Calendar summaries
 - Reminders
+- Phone calls by contact name or number
+- Contact search and listing
+- Camera photos and video recording on command
 
 ## Run
 
@@ -29,6 +32,11 @@ Use a physical device for microphone and speech testing.
 - "Change voice to male"
 - "What is on my calendar today?"
 - "Remind me to call the client at 5 PM"
+- "Call John"
+- "Find contact Sarah"
+- "Take a photo"
+- "Record video"
+- "Show my contacts"
 
 ## Notes
 

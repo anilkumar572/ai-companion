@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
@@ -11,12 +13,16 @@ class StatusHud extends StatelessWidget {
     required this.statusMessage,
     required this.liveTranscript,
     required this.lastResponse,
+    this.mediaPath,
+    this.isVideo = false,
   });
 
   final NovaAgentState state;
   final String statusMessage;
   final String liveTranscript;
   final String lastResponse;
+  final String? mediaPath;
+  final bool isVideo;
 
   @override
   Widget build(BuildContext context) {
@@ -58,8 +64,73 @@ class StatusHud extends StatelessWidget {
             accent: NovaTheme.primary,
           ),
         ],
+        if (mediaPath != null && File(mediaPath!).existsSync()) ...[
+          const SizedBox(height: 14),
+          _MediaPreview(path: mediaPath!, isVideo: isVideo),
+        ],
       ],
     );
+  }
+}
+
+class _MediaPreview extends StatelessWidget {
+  const _MediaPreview({
+    required this.path,
+    required this.isVideo,
+  });
+
+  final String path;
+  final bool isVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: NovaTheme.surface.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: NovaTheme.accent.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            isVideo ? 'CAPTURED VIDEO' : 'CAPTURED PHOTO',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: NovaTheme.accent,
+                  letterSpacing: 2.5,
+                ),
+          ),
+          const SizedBox(height: 10),
+          if (isVideo)
+            Row(
+              children: [
+                const Icon(Icons.videocam_rounded, color: NovaTheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    path.split('/').last,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: NovaTheme.textMuted,
+                        ),
+                  ),
+                ),
+              ],
+            )
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(
+                File(path),
+                height: 160,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 280.ms);
   }
 }
 

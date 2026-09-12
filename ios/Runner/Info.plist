@@ -51,5 +51,13 @@
 	<string>Nova uses speech recognition to understand your voice commands.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Nova reads your calendar to provide schedule summaries.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Nova uses the camera to take photos and record video on your command.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Nova reads contacts so it can find people and place calls for you.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Nova may save captured photos and videos to your library.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Nova may save captured photos and videos to your library.</string>
 </dict>
 </plist>

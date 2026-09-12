@@ -4,6 +4,9 @@ import '../core/constants.dart';
 import '../models/agent_result.dart';
 import '../models/voice_gender.dart';
 import 'calendar_service.dart';
+import 'camera_service.dart';
+import 'contacts_service.dart';
+import 'phone_service.dart';
 import 'reminder_service.dart';
 import 'web_search_service.dart';
 
@@ -12,13 +15,22 @@ class NovaAgent {
     required ReminderService reminders,
     required CalendarService calendar,
     required WebSearchService webSearch,
+    CameraService? camera,
+    ContactsService? contacts,
+    PhoneService? phone,
   })  : _reminders = reminders,
         _calendar = calendar,
-        _webSearch = webSearch;
+        _webSearch = webSearch,
+        _camera = camera ?? CameraService(),
+        _contacts = contacts ?? ContactsService(),
+        _phone = phone ?? PhoneService();
 
   final ReminderService _reminders;
   final CalendarService _calendar;
   final WebSearchService _webSearch;
+  final CameraService _camera;
+  final ContactsService _contacts;
+  final PhoneService _phone;
 
   Future<AgentResult> respond(String input) async {
     final text = _cleanInput(input);
@@ -58,8 +70,49 @@ class NovaAgent {
     ])) {
       return AgentResult(
         message:
-            'I am ${NovaConstants.appName}, your formal voice companion. I can answer questions, search the web, review your calendar, and manage reminders.',
+            'I am ${NovaConstants.appName}, your formal on-device voice companion. I can call contacts, use the camera, manage reminders, review your calendar, and search the web.',
       );
+    }
+
+    if (_containsAny(normalized, [
+      'what can you do',
+      'your capabilities',
+      'help me',
+    ])) {
+      return AgentResult(message: _capabilities());
+    }
+
+    if (_looksLikeCallCommand(normalized)) {
+      return await _handleCall(text, normalized);
+    }
+
+    if (_containsAny(normalized, [
+      'show contacts',
+      'list contacts',
+      'my contacts',
+      'open contacts',
+    ])) {
+      return await _handleListContacts();
+    }
+
+    if (_containsAny(normalized, [
+      'find contact',
+      'search contact',
+      'look up contact',
+    ])) {
+      final query = _extractAfterKeywords(
+        text,
+        ['find contact', 'search contact', 'look up contact'],
+      );
+      return await _handleFindContact(query);
+    }
+
+    if (_looksLikePhotoCommand(normalized)) {
+      return await _handleTakePhoto();
+    }
+
+    if (_looksLikeVideoCommand(normalized)) {
+      return await _handleRecordVideo();
     }
 
     if (_containsAny(normalized, [
@@ -123,10 +176,201 @@ class NovaAgent {
       return AgentResult(message: fallbackSearch);
     }
 
-    return AgentResult(
-      message:
-          'I am ready to help. You may ask me a question, request a web search, set a reminder, or ask about your calendar.',
-    );
+    return AgentResult(message: _capabilities());
+  }
+
+  String _capabilities() {
+    return 'I can assist on-device with calls, contacts, camera photos, video recording, reminders, calendar review, and web search. For example, say "Call John", "Take a photo", or "What is on my calendar today?"';
+  }
+
+  Future<AgentResult> _handleCall(String text, String normalized) async {
+    final name = _extractCallTarget(text, normalized);
+    if (name.isEmpty) {
+      return const AgentResult(
+        message: 'Please tell me who you would like me to call.',
+      );
+    }
+
+    if (RegExp(r'^\+?[\d\s\-()]{7,}$').hasMatch(name)) {
+      try {
+        await _phone.callNumber(name);
+        return AgentResult(message: 'Calling $name now.');
+      } on PhoneNumberException catch (error) {
+        return AgentResult(message: error.message);
+      } on PhoneLaunchException {
+        return const AgentResult(
+          message: 'I was unable to start the phone call on this device.',
+        );
+      }
+    }
+
+    try {
+      final matches = await _contacts.searchByName(name);
+      if (matches.isEmpty) {
+        return AgentResult(
+          message: 'I could not find a contact named "$name".',
+        );
+      }
+
+      if (matches.length > 1) {
+        final options = matches
+            .take(3)
+            .map((match) => match.displayName)
+            .join(', ');
+        return AgentResult(
+          message:
+              'I found multiple contacts: $options. Please say the full name you want to call.',
+        );
+      }
+
+      final contact = matches.first;
+      await _phone.callNumber(contact.phoneNumber);
+      return AgentResult(
+        message: 'Calling ${contact.displayName} now.',
+      );
+    } on ContactsPermissionException {
+      return const AgentResult(
+        message:
+            'Contacts permission is required before I can place calls by name.',
+      );
+    } on PhoneLaunchException {
+      return const AgentResult(
+        message: 'I was unable to start the phone call on this device.',
+      );
+    }
+  }
+
+  Future<AgentResult> _handleListContacts() async {
+    try {
+      final contacts = await _contacts.listRecent(limit: 8);
+      if (contacts.isEmpty) {
+        return const AgentResult(message: 'No contacts were found on this device.');
+      }
+
+      final names = contacts.map((contact) => contact.displayName).join(', ');
+      return AgentResult(message: 'Here are some of your contacts: $names.');
+    } on ContactsPermissionException {
+      return const AgentResult(
+        message: 'Contacts permission is required to read your contacts.',
+      );
+    }
+  }
+
+  Future<AgentResult> _handleFindContact(String query) async {
+    if (query.trim().isEmpty) {
+      return const AgentResult(
+        message: 'Please tell me the contact name you want to find.',
+      );
+    }
+
+    try {
+      final matches = await _contacts.searchByName(query);
+      if (matches.isEmpty) {
+        return AgentResult(message: 'No contact matched "$query".');
+      }
+
+      final lines = matches
+          .take(5)
+          .map((match) => '${match.displayName} — ${match.phoneNumber}')
+          .join('\n');
+      return AgentResult(message: 'Matching contacts:\n$lines');
+    } on ContactsPermissionException {
+      return const AgentResult(
+        message: 'Contacts permission is required to search your contacts.',
+      );
+    }
+  }
+
+  Future<AgentResult> _handleTakePhoto() async {
+    try {
+      final capture = await _camera.takePhoto();
+      if (capture == null) {
+        return const AgentResult(message: 'The camera was closed before a photo was taken.');
+      }
+
+      return AgentResult(
+        message: 'Photo captured successfully. It is ready for review on your device.',
+        mediaPath: capture.path,
+        isVideo: false,
+      );
+    } on CameraPermissionException {
+      return const AgentResult(
+        message: 'Camera permission is required before I can take a photo.',
+      );
+    }
+  }
+
+  Future<AgentResult> _handleRecordVideo() async {
+    try {
+      final capture = await _camera.recordVideo();
+      if (capture == null) {
+        return const AgentResult(message: 'Video recording was cancelled.');
+      }
+
+      return AgentResult(
+        message: 'Video recorded successfully and saved on your device.',
+        mediaPath: capture.path,
+        isVideo: true,
+      );
+    } on CameraPermissionException {
+      return const AgentResult(
+        message: 'Camera permission is required before I can record video.',
+      );
+    }
+  }
+
+  bool _looksLikeCallCommand(String normalized) {
+    if (normalized.startsWith('remind me')) return false;
+
+    return normalized.startsWith('call ') ||
+        normalized.startsWith('phone ') ||
+        normalized.startsWith('dial ') ||
+        normalized.startsWith('ring ') ||
+        normalized.startsWith('make a call') ||
+        normalized.contains('make a call to');
+  }
+
+  bool _looksLikePhotoCommand(String normalized) {
+    return _containsAny(normalized, [
+      'take a photo',
+      'take photo',
+      'take picture',
+      'open camera',
+      'capture photo',
+      'capture image',
+      'what am i looking at',
+      'use camera',
+    ]);
+  }
+
+  bool _looksLikeVideoCommand(String normalized) {
+    return _containsAny(normalized, [
+      'record video',
+      'start video',
+      'capture video',
+      'film video',
+      'shoot video',
+    ]);
+  }
+
+  String _extractCallTarget(String text, String normalized) {
+    const prefixes = ['call', 'phone', 'dial', 'ring'];
+    for (final prefix in prefixes) {
+      if (normalized.startsWith('$prefix ')) {
+        return text.substring(prefix.length).trim();
+      }
+      final embedded = ' $prefix ';
+      final index = normalized.indexOf(embedded);
+      if (index != -1) {
+        return text.substring(index + embedded.length).trim();
+      }
+    }
+
+    final makeCall = normalized.indexOf('make a call to ');
+    if (makeCall != -1) {
+      return text.substring(makeCall + 'make a call to '.length).trim();
+    }
+    return '';
   }
 
   String _cleanInput(String input) {
@@ -228,6 +472,17 @@ class NovaAgent {
       final index = normalized.indexOf(prefix);
       if (index != -1) {
         return text.substring(index + prefix.length).trim();
+      }
+    }
+    return text.trim();
+  }
+
+  String _extractAfterKeywords(String text, List<String> keywords) {
+    final lower = text.toLowerCase();
+    for (final keyword in keywords) {
+      final index = lower.indexOf(keyword);
+      if (index != -1) {
+        return text.substring(index + keyword.length).trim();
       }
     }
     return text.trim();
