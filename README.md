@@ -1,69 +1,43 @@
-# ai-companion
+# Nova
 
-A friendly, full-stack **AI Companion** chat app. It runs fully end-to-end with **no external
-services or API keys** thanks to a built-in offline response engine, and transparently upgrades to
-LLM-backed replies when an `OPENAI_API_KEY` is provided.
+Nova is a formal, voice-only AI companion for **Android and iOS**, built with Flutter.
 
 ## Features
 
-- Warm, context-aware chat companion
-- Offline engine with lightweight heuristics: mood detection, name memory, empathetic replies
-- Optional OpenAI integration (`OPENAI_API_KEY`), with automatic fallback to the offline engine
-- Modern, responsive React chat UI
+- Cinematic animated orb interface
+- Voice-only interaction with formal responses
+- Male / female voice selection with instant preview
+- Natural-sounding device voices (prefers enhanced / neural voices when available)
+- Web search for general questions
+- Calendar summaries
+- Reminders
+- Phone calls by contact name or number
+- Contact search and listing
+- Camera photos and video recording on command
 
-## Project structure
-
-| Path | Description |
-| --- | --- |
-| `server/` | Express + TypeScript API (`GET /api/health`, `POST /api/chat`) and the companion engine |
-| `client/` | Vite + React + TypeScript chat UI |
-| `.cursor/environment.json` | Cloud Agent development environment configuration |
-
-## Getting started
-
-Requires Node.js 20+.
+## Run
 
 ```bash
-npm install
-npm run dev
+flutter pub get
+flutter run
 ```
 
-- Client: http://localhost:5173
-- API: http://localhost:3001
+Use a physical device for microphone and speech testing.
 
-`npm run dev` starts both the API server and the Vite client together. The Vite dev server proxies
-`/api` requests to the API server.
+## Voice commands
 
-### Optional: enable LLM replies
+- "Hello Nova"
+- "What is artificial intelligence?"
+- "Search for latest news about space"
+- "Change voice to male"
+- "What is on my calendar today?"
+- "Remind me to call the client at 5 PM"
+- "Call John"
+- "Find contact Sarah"
+- "Take a photo"
+- "Record video"
+- "Show my contacts"
 
-Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. Without it, the app uses the offline engine.
+## Notes
 
-## Scripts
-
-| Command | Description |
-| --- | --- |
-| `npm run dev` | Run API + client dev servers together |
-| `npm run build` | Type-check and build the server and client |
-| `npm run start` | Run the built API server |
-| `npm run lint` | Lint server and client |
-| `npm run typecheck` | Type-check server and client |
-| `npm test` | Run the companion engine unit tests |
-
-## API
-
-`POST /api/chat`
-
-```json
-{ "message": "Hi, my name is Sam", "history": [] }
-```
-
-Response:
-
-```json
-{
-  "reply": "It's lovely to meet you, Sam! I'll remember that. What's on your mind today?",
-  "mood": "neutral",
-  "userName": "Sam",
-  "source": "offline"
-}
-```
+Nova now answers general questions through web search instead of returning a generic capabilities message. Voice changes apply immediately and play a short preview in Settings.
