@@ -104,8 +104,11 @@ class TtsService {
     );
 
     final completer = Completer<void>();
-    final subscription = _audioPlayer.onPlayerComplete.listen((_) {
-      if (!completer.isCompleted) {
+    final completeSub = _audioPlayer.onPlayerComplete.listen((_) {
+      if (!completer.isCompleted) completer.complete();
+    });
+    final stateSub = _audioPlayer.onPlayerStateChanged.listen((playerState) {
+      if (playerState == PlayerState.completed && !completer.isCompleted) {
         completer.complete();
       }
     });
@@ -123,7 +126,8 @@ class TtsService {
       );
       onComplete?.call();
     } finally {
-      await subscription.cancel();
+      await completeSub.cancel();
+      await stateSub.cancel();
     }
   }
 
