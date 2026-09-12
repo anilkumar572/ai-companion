@@ -39,3 +39,5 @@ app.*.map.json
 
 # Node (other project files in repo)
 node_modules/
+teju-release.apk
+*.apk

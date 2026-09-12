@@ -273,21 +273,12 @@ async function handleDebugAi(env) {
       content: 'Reply with exactly: {"reply":"pong","emotion":"happy","animation":"idle","sound":"cute","eyeDirection":"center","speak":true,"language":"en-IN"}',
     }];
     const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
-    if (googleKey) {
-      const model = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
-      const extracted = await callGemini(env, probe, googleKey);
-      return json({ ok: true, provider: "gemini", model, extracted });
+    if (!googleKey) {
+      return json({ ok: false, error: "Set GOOGLE_AI_API_KEY for Gemini chat" }, 500);
     }
-    if (!env.AI) {
-      return json({ ok: false, error: "Set GOOGLE_AI_API_KEY (or enable Workers AI binding)" }, 500);
-    }
-    const extracted = await callWorkersAi(env, probe);
-    return json({
-      ok: true,
-      provider: "llama",
-      model: env.MODEL || "@cf/meta/llama-3.2-3b-instruct",
-      extracted,
-    });
+    const model = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
+    const extracted = await callGemini(env, probe, googleKey);
+    return json({ ok: true, provider: "gemini", model, extracted });
   } catch (err) {
     return json({ ok: false, error: String(err?.message || err) }, 500);
   }
@@ -400,31 +391,7 @@ Return ONLY JSON:
 
 async function callBuddyAi(env, messages) {
   const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
-  let lastError;
-
-  if (googleKey) {
-    try {
-      const text = await callGemini(env, messages, googleKey);
-      if (text?.trim()) return text;
-      lastError = new Error("Empty Gemini response");
-    } catch (err) {
-      lastError = err;
-      console.error("Gemini failed; falling back to Llama", err);
-    }
-  }
-
-  if (env.AI) {
-    try {
-      const text = await callWorkersAi(env, messages);
-      if (text?.trim()) return text;
-      lastError = lastError || new Error("Empty Llama response");
-    } catch (err) {
-      lastError = err;
-      console.error("Workers AI Llama fallback failed", err);
-    }
-  }
-
-  if (!googleKey && !env.AI) {
+  if (!googleKey) {
     const last = messages[messages.length - 1]?.content || "";
     return JSON.stringify({
       reply: inventLocalFallback(last),
@@ -437,7 +404,11 @@ async function callBuddyAi(env, messages) {
     });
   }
 
-  throw lastError || new Error("No AI provider configured. Set GOOGLE_AI_API_KEY.");
+  const text = await callGemini(env, messages, googleKey);
+  if (!text?.trim()) {
+    throw new Error("Gemini returned an empty response");
+  }
+  return text;
 }
 
 async function callGemini(env, messages, apiKey) {
@@ -499,54 +470,6 @@ function extractGeminiText(data) {
   const parts = data?.candidates?.[0]?.content?.parts;
   if (!Array.isArray(parts)) return "";
   return parts.map((p) => (typeof p?.text === "string" ? p.text : "")).join("").trim();
-}
-
-async function callWorkersAi(env, messages) {
-  const models = [
-    env.MODEL || "@cf/meta/llama-3.2-3b-instruct",
-    "@cf/meta/llama-3.2-3b-instruct",
-    "@cf/meta/llama-3.2-1b-instruct",
-    "@cf/meta/llama-4-scout-17b-16e-instruct",
-  ].filter((m, i, arr) => arr.indexOf(m) === i);
-
-  let lastError;
-  for (const model of models) {
-    try {
-      const result = await env.AI.run(model, { messages, max_tokens: 350 });
-      const text = extractAiText(result);
-      if (text?.trim()) return text;
-
-      const prompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
-      const promptResult = await env.AI.run(model, {
-        prompt: `${prompt}\n\nASSISTANT:`,
-        max_tokens: 350,
-      });
-      const promptText = extractAiText(promptResult);
-      if (promptText?.trim()) return promptText;
-      lastError = new Error(`Empty AI response from ${model}`);
-    } catch (err) {
-      lastError = err;
-      console.error(`Workers AI failed for ${model}`, err);
-    }
-  }
-  throw lastError || new Error("Workers AI unavailable");
-}
-
-function extractAiText(result) {
-  if (result == null) return "";
-  if (typeof result === "string") return result;
-  if (typeof result.response === "string") return result.response;
-  if (typeof result.result === "string") return result.result;
-  if (typeof result.text === "string") return result.text;
-  if (typeof result.content === "string") return result.content;
-  if (Array.isArray(result.response)) {
-    return result.response.map((p) => p?.content || p || "").join("");
-  }
-  try {
-    return JSON.stringify(result);
-  } catch (_) {
-    return "";
-  }
 }
 
 function inventLocalFallback(message) {

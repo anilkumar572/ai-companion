@@ -7,7 +7,7 @@ Cloudflare Worker backend for Nova. **All API keys live here — never in the mo
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/health` | GET | Health check |
-| `/chat` | POST | Gemini / Llama chat |
+| `/chat` | POST | Gemini chat |
 | `/tts` | POST | Cartesia speech (voice IDs from env) |
 | `/stt` | POST | Sarvam REST STT proxy (recommended for mobile) |
 | `/stt/ws` | WebSocket | Sarvam streaming STT proxy |
@@ -57,7 +57,7 @@ stored in `wrangler.toml` — only in Cloudflare secrets.
 | `SARVAM_MODE` | `transcribe` |
 | `SARVAM_LANGUAGE_CODE` | `unknown` |
 
-Also enable **Workers AI** binding `AI` in `wrangler.toml` for Llama fallback.
+Chat uses **Gemini only** (`GOOGLE_AI_API_KEY`). Llama / Workers AI fallback is disabled.
 
 ## STT WebSocket
 
