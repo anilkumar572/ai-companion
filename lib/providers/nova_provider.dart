@@ -90,8 +90,10 @@ class NovaProvider extends ChangeNotifier {
   bool _processingTranscript = false;
   bool _usingRecorder = false;
   bool _workerRestSttAvailable = false;
+  bool _micPermissionGranted = false;
   bool _startingListen = false;
   bool _stoppingListen = false;
+  int _busyListenRetries = 0;
   DateTime? _listenStartedAt;
   DateTime? _lastOrbTapAt;
 
@@ -100,8 +102,8 @@ class NovaProvider extends ChangeNotifier {
   Future<void> bootstrap() async {
     voiceGender = voiceGenderFromStorage(_prefs.getString(NovaConstants.prefsVoiceGender));
 
-    final micGranted = await _requestMicPermission();
-    if (!micGranted) {
+    _micPermissionGranted = await _requestMicPermission();
+    if (!_micPermissionGranted) {
       errorMessage = 'Microphone permission is required for voice interaction.';
       state = NovaAgentState.error;
       isBootstrapped = true;
@@ -176,25 +178,26 @@ class NovaProvider extends ChangeNotifier {
     }
 
     _startingListen = true;
+    _busyListenRetries = 0;
     try {
-      final micGranted = await _requestMicPermission();
-      if (!micGranted) {
+      if (!_micPermissionGranted) {
+        _micPermissionGranted = await _requestMicPermission();
+      }
+      if (!_micPermissionGranted) {
         _setRecoverableError(
           'Microphone permission is required. Enable it in Settings.',
         );
         return;
       }
 
-      if (isMicActive) {
-        await _stopCapture();
-      } else {
-        _commandCaptureActive = false;
-        _listenStartedAt = null;
-        audioLevel = 0;
-      }
-
       errorMessage = null;
       _clearConversationDisplay();
+      audioLevel = 0;
+
+      if (isMicActive) {
+        await _stopCapture();
+      }
+
       await _startCommandListening();
     } finally {
       _startingListen = false;
@@ -225,9 +228,9 @@ class NovaProvider extends ChangeNotifier {
         return;
       }
 
-      _setRecoverableError(
+      await _returnToIdleWithHint(
         _usingRecorder && !_workerRestSttAvailable
-            ? 'Cloud speech is unavailable. Teju will use your phone microphone next time — tap the orb and try again.'
+            ? 'Cloud speech is unavailable. Tap the orb and try again.'
             : 'I did not catch that. Tap the orb, speak clearly, then tap again.',
       );
     } finally {
@@ -282,7 +285,7 @@ class NovaProvider extends ChangeNotifier {
 
     _commandCaptureActive = false;
     _listenStartedAt = null;
-    _setRecoverableError(
+    await _returnToIdleWithHint(
       'Could not start listening. Check microphone permission and try again.',
     );
   }
@@ -290,46 +293,37 @@ class NovaProvider extends ChangeNotifier {
   Future<void> _startDeviceSpeechListening() async {
     _usingRecorder = false;
 
-    Object? lastError;
-    for (var attempt = 0; attempt < 2; attempt++) {
-      if (!_commandCaptureActive || state != NovaAgentState.listening) return;
-      if (attempt > 0) {
-        await Future<void>.delayed(const Duration(milliseconds: 250));
-      }
+    if (!_commandCaptureActive || state != NovaAgentState.listening) return;
 
-      try {
-        await _speech.startListening(
-          onResult: (transcript, isFinal) {
-            if (!_commandCaptureActive ||
-                _processingTranscript ||
-                _stoppingListen) {
-              return;
-            }
+    try {
+      await _speech.startListening(
+        onResult: (transcript, isFinal) {
+          if (!_commandCaptureActive ||
+              _processingTranscript ||
+              _stoppingListen) {
+            return;
+          }
 
-            if (transcript.trim().isNotEmpty) {
-              liveTranscript = transcript;
-              notifyListeners();
-            }
-            // Manual tap-to-talk: only stopListening() submits the transcript.
-          },
-          onSoundLevel: _updateAudioLevel,
-          localeId: preferredLanguage,
-          listenFor: const Duration(seconds: 120),
-          pauseFor: const Duration(seconds: 30),
-        );
-        return;
-      } catch (error) {
-        lastError = error;
-      }
+          if (transcript.trim().isNotEmpty) {
+            liveTranscript = transcript;
+            notifyListeners();
+          }
+          // Manual tap-to-talk: only stopListening() submits the transcript.
+        },
+        onSoundLevel: _updateAudioLevel,
+        localeId: preferredLanguage,
+        listenFor: const Duration(seconds: 120),
+        pauseFor: const Duration(seconds: 30),
+      );
+    } catch (error) {
+      _commandCaptureActive = false;
+      _listenStartedAt = null;
+
+      final message = error is StateError && error.message.isNotEmpty
+          ? error.message
+          : 'Could not start listening. Tap the orb to try again.';
+      await _returnToIdleWithHint(message);
     }
-
-    _commandCaptureActive = false;
-    _listenStartedAt = null;
-
-    final message = lastError is StateError && lastError.message.isNotEmpty
-        ? lastError.message
-        : 'Could not start listening. Tap the orb to try again.';
-    _setRecoverableError(message);
   }
 
   Future<String> _finishCapture() async {
@@ -377,18 +371,28 @@ class NovaProvider extends ChangeNotifier {
   void _handleSpeechError(String message) {
     if (_usingRecorder) return;
     if (state != NovaAgentState.listening || _processingTranscript) return;
-    if (_isWithinListenGracePeriod()) return;
+    if (_stoppingListen) return;
 
     if (_isBenignSpeechError(message)) {
       return;
     }
 
+    if (message.contains('busy') &&
+        _busyListenRetries < 1 &&
+        _commandCaptureActive) {
+      _busyListenRetries++;
+      unawaited(_retryDeviceSpeechAfterBusy());
+      return;
+    }
+
     _commandCaptureActive = false;
     unawaited(_recorder.cancel());
-    _setRecoverableError(
-      message.isEmpty
-          ? 'Speech recognition failed. Tap the orb to try again.'
-          : message,
+    unawaited(
+      _returnToIdleWithHint(
+        message.isEmpty
+            ? 'Speech recognition failed. Tap the orb to try again.'
+            : message,
+      ),
     );
   }
 
@@ -396,6 +400,14 @@ class NovaProvider extends ChangeNotifier {
     return message.contains('did not catch that') ||
         message == 'error_speech_timeout' ||
         message == 'error_no_match';
+  }
+
+  Future<void> _retryDeviceSpeechAfterBusy() async {
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (!_commandCaptureActive || state != NovaAgentState.listening) return;
+
+    await _speech.shutdown(hardwareCooldown: true);
+    await _startDeviceSpeechListening();
   }
 
   void _handleSpeechStatus(String status) {
@@ -502,10 +514,25 @@ class NovaProvider extends ChangeNotifier {
   Future<void> _enterIdle() async {
     await _stopCapture();
     _processingTranscript = false;
+    _busyListenRetries = 0;
     errorMessage = null;
     liveTranscript = '';
     state = NovaAgentState.idle;
     statusMessage = 'Tap the orb to speak';
+    notifyListeners();
+  }
+
+  Future<void> _returnToIdleWithHint(String message) async {
+    await _stopCapture();
+    _processingTranscript = false;
+    _busyListenRetries = 0;
+    _commandCaptureActive = false;
+    _listenStartedAt = null;
+    errorMessage = null;
+    liveTranscript = '';
+    audioLevel = 0;
+    state = NovaAgentState.idle;
+    statusMessage = message;
     notifyListeners();
   }
 
