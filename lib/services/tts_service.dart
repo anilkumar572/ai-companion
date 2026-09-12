@@ -88,6 +88,7 @@ class TtsService {
       await initialize(gender: _gender);
     }
 
+    // Worker chat replies are already normalized; keep a light pass for local replies.
     final prepared = _prepareSpeechText(text);
     if (prepared.isEmpty) {
       onComplete?.call();

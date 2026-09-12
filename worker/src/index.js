@@ -378,9 +378,11 @@ Personality: ${personality}. Traits: ${JSON.stringify(traits)}.
 LANGUAGE: Reply in the user's language (en/hi/te/ta/kn/ml/mr/bn/gu/pa/or). Match their language naturally. Never announce language detection.
 
 VOICE / TTS RULES (critical — "reply" is read aloud by text-to-speech):
-- Write 1 to 3 short, complete sentences with correct grammar.
-- Use natural spoken phrasing, not written essay style.
-- Use periods and commas for clear pauses. End with proper punctuation.
+- Write exactly 1 to 3 short, complete sentences with correct grammar.
+- Each sentence must be a full thought. End every sentence with . ? or !
+- Use natural spoken phrasing, as if talking to a friend — not essay or chatbot style.
+- Use periods between sentences. Use commas only inside a sentence, never to join separate ideas.
+- Maximum about 35 words total in "reply".
 - No bullet points, numbered lists, markdown, symbols, URLs, or JSON in "reply".
 - No emojis, asterisks, hashtags, or parenthetical stage directions.
 - No semicolons, colons introducing lists, or long run-on sentences.
@@ -388,12 +390,38 @@ VOICE / TTS RULES (critical — "reply" is read aloud by text-to-speech):
 - Never put beep/boop/whirr/buzz/SFX words or emotion labels in "reply".
 - Put robot SFX only in "sound". Put mood only in "emotion".
 
+GOOD "reply" examples:
+- "Good morning. I am doing well. How can I help you today?"
+- "The weather is sunny today. The temperature is around 32 degrees."
+
+BAD "reply" examples (never do this):
+- "Good morning, I am doing well, how can I help" (comma run-on)
+- "Here are options: call, reminder, search" (list style)
+- "Sure! **happy** beep boop" (markdown / SFX in reply)
+
 ${memoryNotes.length ? `Memory:\n- ${memoryNotes.join("\n- ")}` : ""}
 ${searchNotes ? `Current info:\n${searchNotes}` : ""}
 
 Return ONLY JSON:
 {"reply":"string","emotion":"happy|caring|curious|shy|playful|confused|surprised|sad|angry|sleepy|thinking|neutral","animation":"idle|bounce|look_away|think|confused|speak","sound":"cute|happy|shy|think|error|none","eyeDirection":"center|left|right|up|down|away","speak":true,"language":"en-IN|hi-IN|te-IN"}`;
 }
+
+const GEMINI_REPLY_SCHEMA = {
+  type: "object",
+  properties: {
+    reply: {
+      type: "string",
+      description: "One to three short, grammatically correct spoken sentences.",
+    },
+    emotion: { type: "string" },
+    animation: { type: "string" },
+    sound: { type: "string" },
+    eyeDirection: { type: "string" },
+    speak: { type: "boolean" },
+    language: { type: "string" },
+  },
+  required: ["reply", "emotion", "animation", "sound", "eyeDirection", "speak", "language"],
+};
 
 async function callBuddyAi(env, messages) {
   const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
@@ -441,9 +469,10 @@ async function callGemini(env, messages, apiKey) {
   const body = {
     contents,
     generationConfig: {
-      temperature: 0.55,
-      maxOutputTokens: 512,
+      temperature: 0.35,
+      maxOutputTokens: 320,
       responseMimeType: "application/json",
+      responseSchema: GEMINI_REPLY_SCHEMA,
     },
   };
 
@@ -603,7 +632,7 @@ function sanitizeResponse(input) {
   };
 }
 
-function normalizeForSpeech(text) {
+function normalizeForSpeech(text, maxSentences = 4) {
   let out = String(text || "").trim();
   if (!out) return "";
 
@@ -619,15 +648,37 @@ function normalizeForSpeech(text) {
   out = out.replace(/^\d+[.)]\s+/gm, "");
   out = out.replace(/[\u{1F300}-\u{1FAFF}]/gu, "");
   out = out.replace(/[\u{2600}-\u{27BF}]/gu, "");
-  out = out.replace(/\n+/g, ", ");
-  out = out.replace(/\s*([,.!?;:])\s*/g, "$1 ");
+  out = out.replace(/\n\s*\n+/g, ". ");
+  out = out.replace(/\n+/g, ". ");
+  out = out.replace(/;\s*/g, ". ");
+
+  const latinHeavy = /[A-Za-z]/.test(out);
+  if (latinHeavy) {
+    out = out.replace(/,\s+(and|but|so|because|however|also|then|yet)\s+/gi, ". ");
+  }
+
+  out = out.replace(/\s*([,.!?])\s*/g, "$1 ");
   out = out.replace(/,{2,}/g, ",");
   out = out.replace(/\.{2,}/g, ".");
   out = out.replace(/\.\s*\./g, ".");
   out = out.replace(/,\s*\./g, ".");
-  out = out.replace(/;\s*/g, ", ");
   out = out.replace(/\s{2,}/g, " ");
   out = out.trim();
+
+  const sentences = out
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (sentences.length > maxSentences) {
+    out = sentences.slice(0, maxSentences).join(" ");
+  } else if (sentences.length > 0) {
+    out = sentences.join(" ");
+  }
+
+  if (latinHeavy) {
+    out = out.replace(/(^|[.!?]\s+)([a-z])/g, (match, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
+  }
 
   if (out && !/[.!?]$/.test(out)) {
     out = `${out}.`;

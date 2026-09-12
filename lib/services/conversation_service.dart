@@ -1,5 +1,6 @@
 import '../core/constants.dart';
 import '../models/agent_result.dart';
+import '../utils/speech_text.dart';
 import 'nova_agent.dart';
 import 'worker_chat_service.dart';
 
@@ -27,7 +28,13 @@ class ConversationService {
     );
 
     if (!localResult.deferToCloud) {
-      return localResult;
+      return AgentResult(
+        message: normalizeForSpeech(localResult.message),
+        voiceGenderChange: localResult.voiceGenderChange,
+        mediaPath: localResult.mediaPath,
+        isVideo: localResult.isVideo,
+        speakLanguage: language,
+      );
     }
 
     try {
