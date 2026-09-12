@@ -9,7 +9,7 @@ class AudioRecordingService {
       : _recorder = recorder ?? AudioRecorder();
 
   final AudioRecorder _recorder;
-  StreamSubscription<Amplitude>? _amplitudeSub;
+  Timer? _amplitudeTimer;
   String? _activePath;
 
   bool get isRecording => _activePath != null;
@@ -27,8 +27,7 @@ class AudioRecordingService {
     final path =
         '${directory.path}/nova_capture_${DateTime.now().millisecondsSinceEpoch}.wav';
 
-    await _amplitudeSub?.cancel();
-    _amplitudeSub = null;
+    _stopAmplitudePolling();
 
     await _recorder.start(
       const RecordConfig(
@@ -43,17 +42,21 @@ class AudioRecordingService {
     _activePath = path;
 
     if (onAmplitude != null) {
-      _amplitudeSub = _recorder
-          .onAmplitudeChanged(const Duration(milliseconds: 120))
-          .listen((amplitude) {
-        onAmplitude(_normalizeAmplitude(amplitude.current));
-      });
+      _amplitudeTimer = Timer.periodic(
+        const Duration(milliseconds: 120),
+        (_) async {
+          if (_activePath == null) return;
+          try {
+            final amplitude = await _recorder.getAmplitude();
+            onAmplitude(_normalizeAmplitude(amplitude.current));
+          } catch (_) {}
+        },
+      );
     }
   }
 
   Future<File?> stop() async {
-    await _amplitudeSub?.cancel();
-    _amplitudeSub = null;
+    _stopAmplitudePolling();
 
     final path = _activePath;
     _activePath = null;
@@ -69,8 +72,7 @@ class AudioRecordingService {
   }
 
   Future<void> cancel() async {
-    await _amplitudeSub?.cancel();
-    _amplitudeSub = null;
+    _stopAmplitudePolling();
 
     final path = _activePath;
     _activePath = null;
@@ -90,6 +92,11 @@ class AudioRecordingService {
   Future<void> dispose() async {
     await cancel();
     await _recorder.dispose();
+  }
+
+  void _stopAmplitudePolling() {
+    _amplitudeTimer?.cancel();
+    _amplitudeTimer = null;
   }
 
   double _normalizeAmplitude(double decibels) {

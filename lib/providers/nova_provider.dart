@@ -81,6 +81,7 @@ class NovaProvider extends ChangeNotifier {
 
   bool _commandCaptureActive = false;
   bool _processingTranscript = false;
+  bool _usingRecorder = true;
   DateTime? _listenStartedAt;
 
   bool get isMicActive => _recorder.isRecording || _speech.isListening;
@@ -104,11 +105,7 @@ class NovaProvider extends ChangeNotifier {
     await _tts.initialize(gender: voiceGender);
 
     if (!speechReady) {
-      errorMessage = 'Speech recognition is unavailable on this device.';
-      state = NovaAgentState.error;
-      isBootstrapped = true;
-      notifyListeners();
-      return;
+      _usingRecorder = true;
     }
 
     isBootstrapped = true;
@@ -211,7 +208,15 @@ class NovaProvider extends ChangeNotifier {
 
     try {
       await _recorder.start(onAmplitude: _updateAudioLevel);
+      _usingRecorder = true;
+    } catch (_) {
+      await _startDeviceSpeechListening();
+    }
+  }
 
+  Future<void> _startDeviceSpeechListening() async {
+    _usingRecorder = false;
+    try {
       await _speech.startListening(
         onResult: (transcript, isFinal) {
           if (!_commandCaptureActive || _processingTranscript) return;
@@ -234,7 +239,6 @@ class NovaProvider extends ChangeNotifier {
     } catch (error) {
       _commandCaptureActive = false;
       _listenStartedAt = null;
-      await _recorder.cancel();
 
       final message = error is StateError && error.message.isNotEmpty
           ? error.message
@@ -244,14 +248,14 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<String> _finishCapture() async {
-    final recordedFile = await _recorder.stop();
-    await _speech.shutdown();
-
-    final deviceTranscript = liveTranscript.trim();
-    if (deviceTranscript.isNotEmpty) {
+    if (!_usingRecorder) {
+      final deviceTranscript = liveTranscript.trim();
+      await _speech.shutdown();
       return deviceTranscript;
     }
 
+    final recordedFile = await _recorder.stop();
+    await _speech.shutdown();
     if (recordedFile == null) {
       return '';
     }
@@ -281,6 +285,7 @@ class NovaProvider extends ChangeNotifier {
   }
 
   void _handleSpeechError(String message) {
+    if (_usingRecorder) return;
     if (state != NovaAgentState.listening || _processingTranscript) return;
     if (_isWithinListenGracePeriod()) return;
 
@@ -304,6 +309,7 @@ class NovaProvider extends ChangeNotifier {
   }
 
   void _handleSpeechStatus(String status) {
+    if (_usingRecorder) return;
     if (!_commandCaptureActive || state != NovaAgentState.listening) return;
     if (_processingTranscript) return;
     if (status != 'done' && status != 'notListening') return;
