@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
 import '../models/nova_state.dart';
+import '../models/tts_engine.dart';
 import '../models/voice_gender.dart';
 import '../services/calendar_service.dart';
 import '../services/camera_service.dart';
@@ -57,6 +58,7 @@ class NovaProvider extends ChangeNotifier {
 
   NovaAgentState state = NovaAgentState.idle;
   VoiceGender voiceGender = VoiceGender.female;
+  TtsEngine ttsEngine = TtsEngine.device;
   String statusMessage = '> initializing neural link...';
   String liveTranscript = '';
   String lastResponse = '';
@@ -86,6 +88,7 @@ class NovaProvider extends ChangeNotifier {
       onStatus: _handleSpeechStatus,
     );
     await _tts.initialize(gender: voiceGender);
+    ttsEngine = _tts.engine;
 
     if (!speechReady) {
       errorMessage = 'Speech recognition is unavailable on this device.';
@@ -98,6 +101,46 @@ class NovaProvider extends ChangeNotifier {
     isBootstrapped = true;
     await _startWakeWordListening();
     notifyListeners();
+  }
+
+  String get cartesiaWorkerUrl => _tts.cartesiaWorkerUrl;
+  String get cartesiaLanguage => _tts.cartesiaLanguage;
+  double get cartesiaSpeed => _tts.cartesiaSpeed;
+  String get cartesiaFemaleVoiceId => _tts.cartesiaFemaleVoiceId;
+  String get cartesiaMaleVoiceId => _tts.cartesiaMaleVoiceId;
+  String get installationId => _tts.installationId;
+
+  Future<void> setTtsEngine(TtsEngine engine) async {
+    if (ttsEngine == engine) {
+      await _tts.setEngine(engine, preview: true);
+      return;
+    }
+
+    ttsEngine = engine;
+    await _tts.setEngine(engine, preview: true);
+    notifyListeners();
+  }
+
+  Future<void> updateCartesiaSettings({
+    String? workerUrl,
+    String? language,
+    double? speed,
+    String? femaleVoiceId,
+    String? maleVoiceId,
+    bool preview = false,
+  }) async {
+    await _tts.updateCartesiaSettings(
+      workerUrl: workerUrl,
+      language: language,
+      speed: speed,
+      femaleVoiceId: femaleVoiceId,
+      maleVoiceId: maleVoiceId,
+    );
+    notifyListeners();
+
+    if (preview) {
+      await _tts.speak('Cartesia settings updated.');
+    }
   }
 
   Future<void> setVoiceGender(VoiceGender gender) async {
@@ -313,6 +356,7 @@ class NovaProvider extends ChangeNotifier {
   void dispose() {
     _wakeWordEnabled = false;
     _speech.dispose();
+    _tts.dispose();
     super.dispose();
   }
 }
