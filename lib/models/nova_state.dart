@@ -7,11 +7,12 @@ enum NovaAgentState {
 }
 
 extension NovaAgentStateLabel on NovaAgentState {
-  String get label => switch (this) {
-        NovaAgentState.idle => 'Standby',
-        NovaAgentState.listening => 'Listening',
-        NovaAgentState.thinking => 'Processing',
-        NovaAgentState.speaking => 'Responding',
-        NovaAgentState.error => 'Attention Required',
+  String label({bool wakeWordListening = false}) => switch (this) {
+        NovaAgentState.idle =>
+          wakeWordListening ? 'SCANNING' : 'STANDBY',
+        NovaAgentState.listening => 'LISTENING',
+        NovaAgentState.thinking => 'PROCESSING',
+        NovaAgentState.speaking => 'RESPONDING',
+        NovaAgentState.error => 'FAULT',
       };
 }

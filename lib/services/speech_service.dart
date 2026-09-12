@@ -1,17 +1,22 @@
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+typedef SpeechStatusCallback = void Function(String status);
+
 class SpeechService {
   SpeechService() : _speech = SpeechToText();
 
   final SpeechToText _speech;
   bool _initialized = false;
+  SpeechStatusCallback? _onStatus;
 
   bool get isAvailable => _initialized;
+  bool get isListening => _speech.isListening;
 
-  Future<bool> initialize() async {
+  Future<bool> initialize({SpeechStatusCallback? onStatus}) async {
+    _onStatus = onStatus;
     _initialized = await _speech.initialize(
-      onStatus: (_) {},
+      onStatus: (status) => _onStatus?.call(status),
       onError: (_) {},
     );
     return _initialized;
@@ -20,6 +25,8 @@ class SpeechService {
   Future<void> startListening({
     required void Function(String transcript, bool isFinal) onResult,
     void Function(double level)? onSoundLevel,
+    Duration listenFor = const Duration(minutes: 2),
+    Duration pauseFor = const Duration(seconds: 4),
   }) async {
     if (!_initialized) {
       throw StateError('Speech recognition is not initialized.');
@@ -33,9 +40,23 @@ class SpeechService {
       listenOptions: SpeechListenOptions(
         listenMode: ListenMode.dictation,
         partialResults: true,
-        cancelOnError: true,
+        cancelOnError: false,
         onDevice: true,
+        listenFor: listenFor,
+        pauseFor: pauseFor,
       ),
+    );
+  }
+
+  Future<void> startWakeWordListening({
+    required void Function(String transcript, bool isFinal) onResult,
+    void Function(double level)? onSoundLevel,
+  }) {
+    return startListening(
+      onResult: onResult,
+      onSoundLevel: onSoundLevel,
+      listenFor: const Duration(minutes: 5),
+      pauseFor: const Duration(seconds: 2),
     );
   }
 

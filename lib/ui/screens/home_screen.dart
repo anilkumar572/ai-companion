@@ -6,8 +6,9 @@ import '../../core/constants.dart';
 import '../../core/theme/nova_theme.dart';
 import '../../models/nova_state.dart';
 import '../../providers/nova_provider.dart';
-import '../widgets/grid_background.dart';
+import '../widgets/hacker_background.dart';
 import '../widgets/nova_orb.dart';
+import '../widgets/scanlines_overlay.dart';
 import '../widgets/status_hud.dart';
 import 'settings_screen.dart';
 
@@ -35,8 +36,14 @@ class _HomeScreenState extends State<HomeScreen> {
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: Text(
-          NovaConstants.appName.toUpperCase(),
-          style: const TextStyle(letterSpacing: 6),
+          '> ${NovaConstants.appName.toUpperCase()}_SYS',
+          style: const TextStyle(
+            letterSpacing: 3,
+            fontWeight: FontWeight.w700,
+            shadows: [
+              Shadow(color: NovaTheme.primary, blurRadius: 12),
+            ],
+          ),
         ),
         actions: [
           IconButton(
@@ -46,39 +53,37 @@ class _HomeScreenState extends State<HomeScreen> {
                 MaterialPageRoute(builder: (_) => const SettingsScreen()),
               );
             },
-            icon: const Icon(Icons.tune_rounded),
+            icon: const Icon(Icons.terminal_rounded),
           ),
         ],
       ),
       body: Stack(
         fit: StackFit.expand,
         children: [
-          const GridBackground(),
+          const HackerBackground(),
+          const ScanlinesOverlay(),
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
               child: Column(
                 children: [
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   Text(
                     NovaConstants.tagline,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: NovaTheme.textMuted,
-                          letterSpacing: 2,
+                          letterSpacing: 1.5,
                         ),
                   ).animate().fadeIn(duration: 500.ms),
                   const Spacer(),
                   NovaOrb(
                     state: provider.state,
                     audioLevel: provider.audioLevel,
+                    wakeWordListening: provider.wakeWordListening,
                     onTap: _handleOrbTap,
-                  ).animate().scale(
-                        begin: const Offset(0.92, 0.92),
-                        end: const Offset(1, 1),
-                        duration: 700.ms,
-                        curve: Curves.easeOutBack,
-                      ),
-                  const SizedBox(height: 28),
+                  ),
+                  const SizedBox(height: 22),
                   StatusHud(
                     state: provider.state,
                     statusMessage: provider.statusMessage,
@@ -86,10 +91,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     lastResponse: provider.lastResponse,
                     mediaPath: provider.lastMediaPath,
                     isVideo: provider.lastMediaIsVideo,
+                    wakeWordListening: provider.wakeWordListening,
                   ),
                   const Spacer(),
-                  _BottomHint(state: provider.state),
-                  const SizedBox(height: 18),
+                  _BottomHint(
+                    state: provider.state,
+                    wakeWordListening: provider.wakeWordListening,
+                  ),
+                  const SizedBox(height: 14),
                 ],
               ),
             ),
@@ -116,26 +125,33 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _BottomHint extends StatelessWidget {
-  const _BottomHint({required this.state});
+  const _BottomHint({
+    required this.state,
+    required this.wakeWordListening,
+  });
 
   final NovaAgentState state;
+  final bool wakeWordListening;
 
   @override
   Widget build(BuildContext context) {
     final hint = switch (state) {
-      NovaAgentState.idle => 'Tap the orb to activate voice input',
-      NovaAgentState.listening => 'Speak now. Tap again when finished',
-      NovaAgentState.thinking => 'Nova is analyzing your request',
-      NovaAgentState.speaking => 'Tap to interrupt response',
-      NovaAgentState.error => 'Check permissions and try again',
+      NovaAgentState.idle when wakeWordListening =>
+        '> say "nova" to activate // tap core for manual uplink',
+      NovaAgentState.idle => '> tap core for manual uplink',
+      NovaAgentState.listening => '> uplink open — speak your command',
+      NovaAgentState.thinking => '> decrypting request...',
+      NovaAgentState.speaking => '> tap core to interrupt transmission',
+      NovaAgentState.error => '> check mic permissions and reboot link',
     };
 
     return Text(
       hint,
       textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+      style: Theme.of(context).textTheme.labelSmall?.copyWith(
             color: NovaTheme.textMuted,
-            letterSpacing: 1.2,
+            letterSpacing: 0.8,
+            height: 1.4,
           ),
     );
   }

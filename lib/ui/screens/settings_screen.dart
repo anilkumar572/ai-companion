@@ -15,7 +15,7 @@ class SettingsScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Nova Settings'),
+        title: const Text('> CONFIG_PANEL'),
       ),
       body: ListView(
         padding: const EdgeInsets.all(20),

@@ -11,11 +11,13 @@ class NovaOrb extends StatefulWidget {
     required this.state,
     required this.audioLevel,
     required this.onTap,
+    this.wakeWordListening = false,
   });
 
   final NovaAgentState state;
   final double audioLevel;
   final VoidCallback onTap;
+  final bool wakeWordListening;
 
   @override
   State<NovaOrb> createState() => _NovaOrbState();
@@ -53,7 +55,7 @@ class _NovaOrbState extends State<NovaOrb> with TickerProviderStateMixin {
 
   void _updateSpeed() {
     final speed = switch (widget.state) {
-      NovaAgentState.idle => 1.0,
+      NovaAgentState.idle => widget.wakeWordListening ? 1.4 : 0.9,
       NovaAgentState.listening => 1.8,
       NovaAgentState.thinking => 2.4,
       NovaAgentState.speaking => 1.5,
@@ -96,6 +98,7 @@ class _NovaOrbState extends State<NovaOrb> with TickerProviderStateMixin {
                 rotation: _ringController.value,
                 scan: _scanController.value,
                 audioLevel: widget.audioLevel,
+                wakeWordListening: widget.wakeWordListening,
               ),
             );
           },
@@ -112,6 +115,7 @@ class _NovaOrbPainter extends CustomPainter {
     required this.rotation,
     required this.scan,
     required this.audioLevel,
+    required this.wakeWordListening,
   });
 
   final NovaAgentState state;
@@ -119,6 +123,7 @@ class _NovaOrbPainter extends CustomPainter {
   final double rotation;
   final double scan;
   final double audioLevel;
+  final bool wakeWordListening;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -208,7 +213,9 @@ class _NovaOrbPainter extends CustomPainter {
   }
 
   void _drawScanner(Canvas canvas, Offset center, double radius, Color color) {
-    if (state != NovaAgentState.thinking && state != NovaAgentState.listening) {
+    if (state != NovaAgentState.thinking &&
+        state != NovaAgentState.listening &&
+        !(state == NovaAgentState.idle && wakeWordListening)) {
       return;
     }
 
@@ -230,45 +237,45 @@ class _NovaOrbPainter extends CustomPainter {
 
   _OrbPalette _paletteForState(NovaAgentState state) {
     return switch (state) {
-      NovaAgentState.idle => const _OrbPalette(
-          core: Color(0xFF0A4D68),
-          coreHighlight: NovaTheme.primary,
-          coreShadow: Color(0xFF031B2E),
+      NovaAgentState.idle => _OrbPalette(
+          core: const Color(0xFF001408),
+          coreHighlight: wakeWordListening ? NovaTheme.accent : NovaTheme.primary,
+          coreShadow: const Color(0xFF000000),
           ring: NovaTheme.primary,
           glow: NovaTheme.primary,
-          accent: NovaTheme.accent,
+          accent: NovaTheme.secondary,
         ),
       NovaAgentState.listening => const _OrbPalette(
-          core: Color(0xFF0D5E4F),
+          core: Color(0xFF002010),
           coreHighlight: NovaTheme.accent,
-          coreShadow: Color(0xFF04261F),
+          coreShadow: Color(0xFF000000),
           ring: NovaTheme.accent,
           glow: NovaTheme.accent,
-          accent: Colors.white,
+          accent: NovaTheme.primary,
         ),
       NovaAgentState.thinking => const _OrbPalette(
-          core: Color(0xFF3A2D7A),
+          core: Color(0xFF001A0A),
           coreHighlight: NovaTheme.secondary,
-          coreShadow: Color(0xFF140F33),
+          coreShadow: Color(0xFF000000),
           ring: NovaTheme.secondary,
           glow: NovaTheme.secondary,
           accent: NovaTheme.warning,
         ),
       NovaAgentState.speaking => const _OrbPalette(
-          core: Color(0xFF0B4F7A),
-          coreHighlight: Color(0xFF4CC9FF),
-          coreShadow: Color(0xFF032338),
-          ring: Color(0xFF4CC9FF),
-          glow: Color(0xFF4CC9FF),
-          accent: NovaTheme.primary,
+          core: Color(0xFF002814),
+          coreHighlight: NovaTheme.primary,
+          coreShadow: Color(0xFF000000),
+          ring: NovaTheme.primary,
+          glow: NovaTheme.primary,
+          accent: NovaTheme.accent,
         ),
       NovaAgentState.error => const _OrbPalette(
-          core: Color(0xFF5A1F1F),
-          coreHighlight: Color(0xFFFF6B6B),
-          coreShadow: Color(0xFF2A0B0B),
-          ring: Color(0xFFFF6B6B),
-          glow: Color(0xFFFF6B6B),
-          accent: Color(0xFFFFB4B4),
+          core: Color(0xFF1A0000),
+          coreHighlight: NovaTheme.warning,
+          coreShadow: Color(0xFF000000),
+          ring: NovaTheme.warning,
+          glow: NovaTheme.warning,
+          accent: Color(0xFFFF6666),
         ),
     };
   }
@@ -279,7 +286,8 @@ class _NovaOrbPainter extends CustomPainter {
         oldDelegate.pulse != pulse ||
         oldDelegate.rotation != rotation ||
         oldDelegate.scan != scan ||
-        oldDelegate.audioLevel != audioLevel;
+        oldDelegate.audioLevel != audioLevel ||
+        oldDelegate.wakeWordListening != wakeWordListening;
   }
 }
 

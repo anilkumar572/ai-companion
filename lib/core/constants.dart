@@ -1,6 +1,7 @@
 class NovaConstants {
   static const appName = 'Nova';
-  static const tagline = 'Formal Voice Companion';
+  static const tagline = '// NEURAL_LINK :: VOICE_INTERFACE :: ACTIVE';
+  static const wakeWord = 'nova';
 
   static const prefsVoiceGender = 'voice_gender';
   static const prefsHasOnboarded = 'has_onboarded';

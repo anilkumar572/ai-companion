@@ -15,6 +15,7 @@ class StatusHud extends StatelessWidget {
     required this.lastResponse,
     this.mediaPath,
     this.isVideo = false,
+    this.wakeWordListening = false,
   });
 
   final NovaAgentState state;
@@ -23,49 +24,42 @@ class StatusHud extends StatelessWidget {
   final String lastResponse;
   final String? mediaPath;
   final bool isVideo;
+  final bool wakeWordListening;
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          state.label.toUpperCase(),
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: NovaTheme.primary,
-                letterSpacing: 4,
-                fontWeight: FontWeight.w600,
-              ),
-        ).animate(onPlay: (controller) => controller.repeat()).shimmer(
-              duration: 2200.ms,
-              color: Colors.white.withValues(alpha: 0.35),
-            ),
-        const SizedBox(height: 12),
-        Text(
-          statusMessage,
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: NovaTheme.textPrimary,
-                fontWeight: FontWeight.w500,
-              ),
+        _TerminalLine(
+          prefix: 'SYS',
+          value: state.label(wakeWordListening: wakeWordListening),
+          accent: NovaTheme.accent,
+        ),
+        const SizedBox(height: 8),
+        _TerminalLine(
+          prefix: 'LOG',
+          value: statusMessage,
+          accent: NovaTheme.primary,
         ),
         if (liveTranscript.isNotEmpty) ...[
-          const SizedBox(height: 18),
+          const SizedBox(height: 12),
           _Panel(
-            title: 'YOU',
-            content: liveTranscript,
+            title: 'INPUT_STREAM',
+            content: '> $liveTranscript',
             accent: NovaTheme.accent,
           ),
         ],
         if (lastResponse.isNotEmpty) ...[
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           _Panel(
-            title: 'NOVA',
-            content: lastResponse,
+            title: 'NOVA_OUTPUT',
+            content: '> $lastResponse',
             accent: NovaTheme.primary,
           ),
         ],
         if (mediaPath != null && File(mediaPath!).existsSync()) ...[
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           _MediaPreview(path: mediaPath!, isVideo: isVideo),
         ],
       ],
@@ -73,64 +67,40 @@ class StatusHud extends StatelessWidget {
   }
 }
 
-class _MediaPreview extends StatelessWidget {
-  const _MediaPreview({
-    required this.path,
-    required this.isVideo,
+class _TerminalLine extends StatelessWidget {
+  const _TerminalLine({
+    required this.prefix,
+    required this.value,
+    required this.accent,
   });
 
-  final String path;
-  final bool isVideo;
+  final String prefix;
+  final String value;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: NovaTheme.surface.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: NovaTheme.accent.withValues(alpha: 0.35)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            isVideo ? 'CAPTURED VIDEO' : 'CAPTURED PHOTO',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: NovaTheme.accent,
-                  letterSpacing: 2.5,
-                ),
-          ),
-          const SizedBox(height: 10),
-          if (isVideo)
-            Row(
-              children: [
-                const Icon(Icons.videocam_rounded, color: NovaTheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    path.split('/').last,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: NovaTheme.textMuted,
-                        ),
-                  ),
-                ),
-              ],
-            )
-          else
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.file(
-                File(path),
-                height: 160,
-                width: double.infinity,
-                fit: BoxFit.cover,
-              ),
+    return RichText(
+      text: TextSpan(
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: NovaTheme.textMuted,
+              letterSpacing: 1.2,
             ),
+        children: [
+          TextSpan(
+            text: '[$prefix] ',
+            style: TextStyle(color: accent, fontWeight: FontWeight.bold),
+          ),
+          TextSpan(
+            text: value,
+            style: const TextStyle(color: NovaTheme.textPrimary),
+          ),
         ],
       ),
-    ).animate().fadeIn(duration: 280.ms);
+    ).animate(onPlay: (c) => c.repeat()).shimmer(
+          duration: 2400.ms,
+          color: NovaTheme.primary.withValues(alpha: 0.25),
+        );
   }
 }
 
@@ -148,40 +118,81 @@ class _Panel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: NovaTheme.surface.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: accent.withValues(alpha: 0.35)),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withValues(alpha: 0.08),
-            blurRadius: 24,
-            spreadRadius: 2,
-          ),
-        ],
+        color: NovaTheme.panel.withValues(alpha: 0.92),
+        border: Border.all(color: accent.withValues(alpha: 0.45)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            title,
+            '// $title',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: accent,
-                  letterSpacing: 2.5,
+                  letterSpacing: 2,
                 ),
           ),
           const SizedBox(height: 8),
           Text(
             content,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: NovaTheme.textMuted,
-                  height: 1.5,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: NovaTheme.secondary,
+                  height: 1.55,
                 ),
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 280.ms).slideY(begin: 0.08, end: 0);
+    ).animate().fadeIn(duration: 220.ms);
+  }
+}
+
+class _MediaPreview extends StatelessWidget {
+  const _MediaPreview({
+    required this.path,
+    required this.isVideo,
+  });
+
+  final String path;
+  final bool isVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: NovaTheme.panel,
+        border: Border.all(color: NovaTheme.primary.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            isVideo ? '// VIDEO_CAPTURE' : '// IMAGE_CAPTURE',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: NovaTheme.accent,
+                ),
+          ),
+          const SizedBox(height: 8),
+          if (isVideo)
+            Text('> $path', style: Theme.of(context).textTheme.bodySmall)
+          else
+            ColorFiltered(
+              colorFilter: const ColorFilter.matrix([
+                -1, 0, 0, 0, 255,
+                0, -1, 0, 0, 255,
+                0, 0, -1, 0, 255,
+                0, 0, 0, 1, 0,
+              ]),
+              child: Image.file(
+                File(path),
+                height: 140,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
