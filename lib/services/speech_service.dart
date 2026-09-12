@@ -10,11 +10,12 @@ class SpeechService {
 
   final SpeechToText _speech;
   bool _initialized = false;
+  bool _sessionActive = false;
   SpeechStatusCallback? _onStatus;
   SpeechErrorCallback? _onError;
 
   bool get isAvailable => _initialized;
-  bool get isListening => _speech.isListening;
+  bool get isListening => _speech.isListening || _sessionActive;
 
   Future<bool> initialize({
     SpeechStatusCallback? onStatus,
@@ -23,8 +24,16 @@ class SpeechService {
     _onStatus = onStatus;
     _onError = onError;
     _initialized = await _speech.initialize(
-      onStatus: (status) => _onStatus?.call(status),
-      onError: (error) => _onError?.call(_formatError(error)),
+      onStatus: (status) {
+        if (status == 'done' || status == 'notListening') {
+          _sessionActive = false;
+        }
+        _onStatus?.call(status);
+      },
+      onError: (error) {
+        _sessionActive = false;
+        _onError?.call(_formatError(error));
+      },
     );
     return _initialized;
   }
@@ -33,7 +42,7 @@ class SpeechService {
     required void Function(String transcript, bool isFinal) onResult,
     void Function(double level)? onSoundLevel,
     String? localeId,
-    Duration listenFor = const Duration(seconds: 30),
+    Duration listenFor = const Duration(seconds: 12),
     Duration pauseFor = const Duration(seconds: 2),
     bool onDevice = true,
   }) async {
@@ -46,52 +55,15 @@ class SpeechService {
       throw StateError('Microphone permission was denied.');
     }
 
-    await releaseMicrophone();
-    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await shutdown();
 
-    final started = await _listenWithMode(
-      onResult: onResult,
-      onSoundLevel: onSoundLevel,
-      localeId: localeId,
-      listenFor: listenFor,
-      pauseFor: pauseFor,
-      onDevice: onDevice,
-      mode: ListenMode.confirmation,
-    );
-
-    if (started) return;
-
-    final fallbackStarted = await _listenWithMode(
-      onResult: onResult,
-      onSoundLevel: onSoundLevel,
-      localeId: localeId,
-      listenFor: listenFor,
-      pauseFor: pauseFor,
-      onDevice: onDevice,
-      mode: ListenMode.dictation,
-    );
-
-    if (!fallbackStarted) {
-      throw StateError('Could not start speech recognition on this device.');
-    }
-  }
-
-  Future<bool> _listenWithMode({
-    required void Function(String transcript, bool isFinal) onResult,
-    void Function(double level)? onSoundLevel,
-    String? localeId,
-    required Duration listenFor,
-    required Duration pauseFor,
-    required bool onDevice,
-    required ListenMode mode,
-  }) async {
-    return await _speech.listen(
+    final started = await _speech.listen(
       onResult: (SpeechRecognitionResult result) {
         onResult(result.recognizedWords, result.finalResult);
       },
       onSoundLevelChange: onSoundLevel,
       listenOptions: SpeechListenOptions(
-        listenMode: mode,
+        listenMode: ListenMode.confirmation,
         partialResults: true,
         cancelOnError: true,
         onDevice: onDevice,
@@ -100,36 +72,37 @@ class SpeechService {
         localeId: localeId,
       ),
     );
+
+    if (!started) {
+      throw StateError('Could not start speech recognition on this device.');
+    }
+
+    _sessionActive = true;
   }
 
-  /// Fully releases the microphone. Prefer this over [stopListening] when idle.
-  Future<void> releaseMicrophone() async {
+  /// Hard stop — releases mic immediately. Call before TTS playback.
+  Future<void> shutdown() async {
+    _sessionActive = false;
     if (!_initialized) return;
 
     try {
       if (_speech.isListening) {
-        await _speech.cancel();
-      }
-    } catch (_) {
-      try {
         await _speech.stop();
-      } catch (_) {
-        // Ignore — engine may already be stopped.
       }
-    }
+    } catch (_) {}
+
+    try {
+      await _speech.cancel();
+    } catch (_) {}
+
+    // Let Android release the mic hardware before TTS takes audio focus.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
   }
 
-  Future<void> stopListening() async {
-    if (!_initialized || !_speech.isListening) return;
-    try {
-      await _speech.stop();
-    } catch (_) {
-      await releaseMicrophone();
-    }
-  }
+  Future<void> releaseMicrophone() => shutdown();
 
   Future<void> dispose() async {
-    await releaseMicrophone();
+    await shutdown();
   }
 
   String _formatError(SpeechRecognitionError error) {
