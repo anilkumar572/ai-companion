@@ -138,13 +138,14 @@ class TtsService {
       await player.stop();
       await player.setFilePath(path);
       await player.setVolume(1.0);
-      onStart?.call();
       await player.play();
 
       if (!await _waitUntilAudible(player)) {
         await player.stop();
         return false;
       }
+
+      onStart?.call();
 
       await player.processingStateStream.firstWhere(
         (state) => state == ProcessingState.completed,

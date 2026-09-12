@@ -43,7 +43,7 @@ class ConversationService {
         installationId: installationId,
         message: input,
         language: language,
-        personality: 'formal',
+        personality: 'friendly',
         robotName: NovaConstants.appName,
         conversationContext: _cloudHistory,
       );
@@ -55,7 +55,7 @@ class ConversationService {
       }
 
       return AgentResult(
-        message: response.reply,
+        message: normalizeForSpeech(response.reply),
         speakLanguage: response.language,
       );
     } catch (_) {

@@ -20,6 +20,7 @@ import '../services/reminder_service.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
 import '../services/web_search_service.dart';
+import '../services/worker_health_service.dart';
 import '../services/worker_stt_service.dart';
 
 class NovaProvider extends ChangeNotifier {
@@ -44,6 +45,7 @@ class NovaProvider extends ChangeNotifier {
       speech: speech,
       recorder: AudioRecordingService(),
       workerStt: const WorkerSttService(),
+      workerHealth: const WorkerHealthService(),
       tts: TtsService(prefs: prefs),
       conversation: ConversationService(deviceAgent: agent),
     );
@@ -54,12 +56,14 @@ class NovaProvider extends ChangeNotifier {
     required SpeechService speech,
     required AudioRecordingService recorder,
     required WorkerSttService workerStt,
+    required WorkerHealthService workerHealth,
     required TtsService tts,
     required ConversationService conversation,
   })  : _prefs = prefs,
         _speech = speech,
         _recorder = recorder,
         _workerStt = workerStt,
+        _workerHealth = workerHealth,
         _tts = tts,
         _conversation = conversation;
 
@@ -67,6 +71,7 @@ class NovaProvider extends ChangeNotifier {
   final SpeechService _speech;
   final AudioRecordingService _recorder;
   final WorkerSttService _workerStt;
+  final WorkerHealthService _workerHealth;
   final TtsService _tts;
   final ConversationService _conversation;
 
@@ -83,7 +88,8 @@ class NovaProvider extends ChangeNotifier {
 
   bool _commandCaptureActive = false;
   bool _processingTranscript = false;
-  bool _usingRecorder = true;
+  bool _usingRecorder = false;
+  bool _workerRestSttAvailable = false;
   DateTime? _listenStartedAt;
 
   bool get isMicActive => _recorder.isRecording || _speech.isListening;
@@ -105,9 +111,15 @@ class NovaProvider extends ChangeNotifier {
       onError: _handleSpeechError,
     );
     await _tts.initialize(gender: voiceGender);
+    _workerRestSttAvailable = await _workerHealth.supportsRestStt(workerUrl);
 
-    if (!speechReady) {
-      _usingRecorder = true;
+    if (!speechReady && !_workerRestSttAvailable) {
+      errorMessage =
+          'Speech recognition is unavailable on this device right now.';
+      state = NovaAgentState.error;
+      isBootstrapped = true;
+      notifyListeners();
+      return;
     }
 
     isBootstrapped = true;
@@ -181,7 +193,9 @@ class NovaProvider extends ChangeNotifier {
     }
 
     _setRecoverableError(
-      'I did not catch that. Tap the orb, speak clearly, then tap again.',
+      _usingRecorder && !_workerRestSttAvailable
+          ? 'Cloud speech is unavailable. Teju will use your phone microphone next time — tap the orb and try again.'
+          : 'I did not catch that. Tap the orb, speak clearly, then tap again.',
     );
   }
 
@@ -215,12 +229,26 @@ class NovaProvider extends ChangeNotifier {
     statusMessage = 'Listening… tap the orb when done';
     notifyListeners();
 
-    try {
-      await _recorder.start(onAmplitude: _updateAudioLevel);
-      _usingRecorder = true;
-    } catch (_) {
+    if (_speech.isAvailable) {
       await _startDeviceSpeechListening();
+      return;
     }
+
+    if (_workerRestSttAvailable) {
+      try {
+        await _recorder.start(onAmplitude: _updateAudioLevel);
+        _usingRecorder = true;
+        return;
+      } catch (_) {
+        // Fall through to error below.
+      }
+    }
+
+    _commandCaptureActive = false;
+    _listenStartedAt = null;
+    _setRecoverableError(
+      'Could not start listening. Check microphone permission and try again.',
+    );
   }
 
   Future<void> _startDeviceSpeechListening() async {
@@ -276,6 +304,11 @@ class NovaProvider extends ChangeNotifier {
         audioFile: recordedFile,
         languageCode: preferredLanguage,
       );
+    } on WorkerSttException catch (error) {
+      if (error.statusCode == 404) {
+        _workerRestSttAvailable = false;
+      }
+      return '';
     } catch (_) {
       return '';
     } finally {
@@ -374,6 +407,9 @@ class NovaProvider extends ChangeNotifier {
         await _tts.setGender(voiceGender);
       }
 
+      lastResponse = result.message;
+      lastMediaPath = result.mediaPath;
+      lastMediaIsVideo = result.isVideo;
       state = NovaAgentState.speaking;
       statusMessage = 'Preparing voice…';
       notifyListeners();
@@ -381,9 +417,6 @@ class NovaProvider extends ChangeNotifier {
       await _tts.speak(
         result.message,
         onStart: () {
-          lastResponse = result!.message;
-          lastMediaPath = result.mediaPath;
-          lastMediaIsVideo = result.isVideo;
           statusMessage = 'Speaking…';
           notifyListeners();
         },
