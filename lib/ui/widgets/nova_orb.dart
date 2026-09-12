@@ -11,11 +11,13 @@ class NovaOrb extends StatefulWidget {
     required this.state,
     required this.audioLevel,
     required this.onTap,
+    this.enabled = true,
   });
 
   final NovaAgentState state;
   final double audioLevel;
   final VoidCallback onTap;
+  final bool enabled;
 
   @override
   State<NovaOrb> createState() => _NovaOrbState();
@@ -78,8 +80,10 @@ class _NovaOrbState extends State<NovaOrb> with TickerProviderStateMixin {
     _updateSpeed();
 
     return GestureDetector(
-      onTap: widget.onTap,
-      child: SizedBox(
+      onTap: widget.enabled ? widget.onTap : null,
+      child: Opacity(
+        opacity: widget.enabled ? 1 : 0.55,
+        child: SizedBox(
         width: 320,
         height: 320,
         child: AnimatedBuilder(
@@ -100,6 +104,7 @@ class _NovaOrbState extends State<NovaOrb> with TickerProviderStateMixin {
             );
           },
         ),
+      ),
       ),
     );
   }

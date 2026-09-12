@@ -106,6 +106,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   NovaOrb(
                     state: provider.state,
                     audioLevel: provider.audioLevel,
+                    enabled: provider.isBootstrapped,
                     onTap: _handleOrbTap,
                   ),
                   const SizedBox(height: 20),
@@ -123,7 +124,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _BottomHint(state: provider.state),
+                  _BottomHint(
+                    state: provider.state,
+                    isBootstrapped: provider.isBootstrapped,
+                  ),
                   const SizedBox(height: 16),
                 ],
               ),
@@ -136,6 +140,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _handleOrbTap() {
     final provider = context.read<NovaProvider>();
+    if (!provider.isBootstrapped) return;
+
     switch (provider.state) {
       case NovaAgentState.idle:
       case NovaAgentState.error:
@@ -151,12 +157,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 }
 
 class _BottomHint extends StatelessWidget {
-  const _BottomHint({required this.state});
+  const _BottomHint({
+    required this.state,
+    required this.isBootstrapped,
+  });
 
   final NovaAgentState state;
+  final bool isBootstrapped;
 
   @override
   Widget build(BuildContext context) {
+    if (!isBootstrapped) {
+      return Text(
+        'Getting Teju ready…',
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: NovaTheme.textMuted,
+              height: 1.45,
+            ),
+      );
+    }
+
     final hint = switch (state) {
       NovaAgentState.idle => 'Tap the orb to speak',
       NovaAgentState.listening => 'Speak now — tap the orb when finished',

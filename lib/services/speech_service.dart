@@ -54,7 +54,11 @@ class SpeechService {
       throw StateError('Microphone permission was denied.');
     }
 
-    await shutdown();
+    if (_sessionActive || _speech.isListening) {
+      await shutdown(hardwareCooldown: true);
+    } else {
+      await shutdown(hardwareCooldown: false);
+    }
 
     final resolvedLocale = await _resolveLocaleId(localeId);
     final attempts = <_ListenAttempt>[
@@ -96,7 +100,8 @@ class SpeechService {
   }
 
   /// Hard stop — releases mic immediately. Call before TTS playback.
-  Future<void> shutdown() async {
+  Future<void> shutdown({bool hardwareCooldown = true}) async {
+    final wasActive = _sessionActive || _speech.isListening;
     _sessionActive = false;
     if (!_initialized) return;
 
@@ -110,11 +115,13 @@ class SpeechService {
       await _speech.cancel();
     } catch (_) {}
 
-    // Let Android release the mic hardware before TTS takes audio focus.
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    // Only wait for Android mic release when something was actually listening.
+    if (hardwareCooldown && wasActive) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
   }
 
-  Future<void> releaseMicrophone() => shutdown();
+  Future<void> releaseMicrophone() => shutdown(hardwareCooldown: true);
 
   Future<void> dispose() async {
     await shutdown();

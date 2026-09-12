@@ -90,6 +90,7 @@ class NovaProvider extends ChangeNotifier {
   bool _processingTranscript = false;
   bool _usingRecorder = false;
   bool _workerRestSttAvailable = false;
+  bool _startingListen = false;
   DateTime? _listenStartedAt;
 
   bool get isMicActive => _recorder.isRecording || _speech.isListening;
@@ -111,19 +112,27 @@ class NovaProvider extends ChangeNotifier {
       onError: _handleSpeechError,
     );
     await _tts.initialize(gender: voiceGender);
-    _workerRestSttAvailable = await _workerHealth.supportsRestStt(workerUrl);
 
-    if (!speechReady && !_workerRestSttAvailable) {
-      errorMessage =
-          'Speech recognition is unavailable on this device right now.';
-      state = NovaAgentState.error;
-      isBootstrapped = true;
-      notifyListeners();
-      return;
+    if (!speechReady) {
+      _workerRestSttAvailable = await _workerHealth.supportsRestStt(workerUrl);
+      if (!_workerRestSttAvailable) {
+        errorMessage =
+            'Speech recognition is unavailable on this device right now.';
+        state = NovaAgentState.error;
+        isBootstrapped = true;
+        notifyListeners();
+        return;
+      }
+    } else {
+      unawaited(_refreshWorkerSttAvailability());
     }
 
     isBootstrapped = true;
     await _enterIdle();
+  }
+
+  Future<void> _refreshWorkerSttAvailability() async {
+    _workerRestSttAvailable = await _workerHealth.supportsRestStt(workerUrl);
   }
 
   String get workerUrl => NovaConstants.workerUrl;
@@ -149,26 +158,37 @@ class NovaProvider extends ChangeNotifier {
   }
 
   Future<void> startListening() async {
+    if (!isBootstrapped || _startingListen) return;
     if (state == NovaAgentState.listening ||
         state == NovaAgentState.speaking ||
         state == NovaAgentState.thinking) {
       return;
     }
 
-    final micGranted = await _requestMicPermission();
-    if (!micGranted) {
-      _setRecoverableError(
-        'Microphone permission is required. Enable it in Settings.',
-      );
-      return;
+    _startingListen = true;
+    try {
+      final micGranted = await _requestMicPermission();
+      if (!micGranted) {
+        _setRecoverableError(
+          'Microphone permission is required. Enable it in Settings.',
+        );
+        return;
+      }
+
+      if (isMicActive) {
+        await _stopCapture();
+      } else {
+        _commandCaptureActive = false;
+        _listenStartedAt = null;
+        audioLevel = 0;
+      }
+
+      errorMessage = null;
+      _clearConversationDisplay();
+      await _startCommandListening();
+    } finally {
+      _startingListen = false;
     }
-
-    await _stopCapture();
-    errorMessage = null;
-    _clearConversationDisplay();
-    audioLevel = 0;
-
-    await _startCommandListening();
   }
 
   Future<void> stopListening() async {
@@ -253,35 +273,47 @@ class NovaProvider extends ChangeNotifier {
 
   Future<void> _startDeviceSpeechListening() async {
     _usingRecorder = false;
-    try {
-      await _speech.startListening(
-        onResult: (transcript, isFinal) {
-          if (!_commandCaptureActive || _processingTranscript) return;
 
-          if (transcript.trim().isNotEmpty) {
-            liveTranscript = transcript;
-            notifyListeners();
-          }
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (!_commandCaptureActive || state != NovaAgentState.listening) return;
+      if (attempt > 0) {
+        await Future<void>.delayed(Duration(milliseconds: 180 * attempt));
+      }
 
-          if (!isFinal || transcript.trim().isEmpty) return;
+      try {
+        await _speech.startListening(
+          onResult: (transcript, isFinal) {
+            if (!_commandCaptureActive || _processingTranscript) return;
 
-          _commandCaptureActive = false;
-          unawaited(_beginProcessing(transcript.trim()));
-        },
-        onSoundLevel: _updateAudioLevel,
-        localeId: preferredLanguage,
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 4),
-      );
-    } catch (error) {
-      _commandCaptureActive = false;
-      _listenStartedAt = null;
+            if (transcript.trim().isNotEmpty) {
+              liveTranscript = transcript;
+              notifyListeners();
+            }
 
-      final message = error is StateError && error.message.isNotEmpty
-          ? error.message
-          : 'Could not start listening. Tap the orb to try again.';
-      _setRecoverableError(message);
+            if (!isFinal || transcript.trim().isEmpty) return;
+
+            _commandCaptureActive = false;
+            unawaited(_beginProcessing(transcript.trim()));
+          },
+          onSoundLevel: _updateAudioLevel,
+          localeId: preferredLanguage,
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 4),
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+      }
     }
+
+    _commandCaptureActive = false;
+    _listenStartedAt = null;
+
+    final message = lastError is StateError && lastError.message.isNotEmpty
+        ? lastError.message
+        : 'Could not start listening. Tap the orb to try again.';
+    _setRecoverableError(message);
   }
 
   Future<String> _finishCapture() async {
@@ -335,6 +367,11 @@ class NovaProvider extends ChangeNotifier {
       return;
     }
 
+    if (message.contains('busy') && _isWithinListenGracePeriod()) {
+      unawaited(_retryDeviceSpeechListening());
+      return;
+    }
+
     _commandCaptureActive = false;
     unawaited(_recorder.cancel());
     _setRecoverableError(
@@ -368,7 +405,13 @@ class NovaProvider extends ChangeNotifier {
   bool _isWithinListenGracePeriod() {
     final startedAt = _listenStartedAt;
     if (startedAt == null) return false;
-    return DateTime.now().difference(startedAt) < const Duration(seconds: 1);
+    return DateTime.now().difference(startedAt) < const Duration(seconds: 2);
+  }
+
+  Future<void> _retryDeviceSpeechListening() async {
+    if (!_commandCaptureActive || state != NovaAgentState.listening) return;
+    await _speech.shutdown(hardwareCooldown: true);
+    await _startDeviceSpeechListening();
   }
 
   Future<void> _beginProcessing(String transcript) async {
