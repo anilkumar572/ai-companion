@@ -57,7 +57,10 @@ stored in `wrangler.toml` — only in Cloudflare secrets.
 | `SARVAM_MODE` | `transcribe` |
 | `SARVAM_LANGUAGE_CODE` | `unknown` |
 
-Chat uses **Gemini only** (`GOOGLE_AI_API_KEY`). Llama / Workers AI fallback is disabled.
+Chat uses **Gemini first** (`GOOGLE_AI_API_KEY`). If Cloudflare routes through a blocked
+region (e.g. Hong Kong) and Gemini returns `User location is not supported`, the worker
+automatically falls back to **Cloudflare Workers AI** (Llama). Placement is pinned near
+`generativelanguage.googleapis.com` to reduce region blocks.
 
 ## STT WebSocket
 

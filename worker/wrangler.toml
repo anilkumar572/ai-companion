@@ -2,8 +2,16 @@ name = "buddy-ai-worker"
 main = "src/index.js"
 compatibility_date = "2025-10-01"
 
+# Run the worker near Google's Gemini API — avoids HKG/other blocked colos.
+[placement]
+hostname = "generativelanguage.googleapis.com"
+
+[ai]
+binding = "AI"
+
 [vars]
 GOOGLE_AI_MODEL = "gemini-2.0-flash"
+MODEL = "@cf/meta/llama-3.2-3b-instruct"
 CARTESIA_MODEL = "sonic-3.6"
 CARTESIA_VERSION = "2026-08-14"
 CARTESIA_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"

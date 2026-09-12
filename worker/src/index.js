@@ -37,7 +37,7 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/debug/ai") {
-      return cors(await handleDebugAi(env));
+      return cors(await handleDebugAi(request, env));
     }
 
     if (request.headers.get("Upgrade") === "websocket" && url.pathname === "/stt/ws") {
@@ -266,21 +266,37 @@ async function handleSttRest(request, env) {
   });
 }
 
-async function handleDebugAi(env) {
+async function handleDebugAi(request, env) {
+  const colo = request.cf?.colo || null;
   try {
     const probe = [{
       role: "user",
       content: 'Reply with exactly: {"reply":"pong","emotion":"happy","animation":"idle","sound":"cute","eyeDirection":"center","speak":true,"language":"en-IN"}',
     }];
     const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
-    if (!googleKey) {
-      return json({ ok: false, error: "Set GOOGLE_AI_API_KEY for Gemini chat" }, 500);
+    if (!googleKey && !env.AI) {
+      return json({
+        ok: false,
+        colo,
+        error: "Set GOOGLE_AI_API_KEY (or enable Workers AI binding)",
+      }, 500);
     }
-    const model = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
-    const extracted = await callGemini(env, probe, googleKey);
-    return json({ ok: true, provider: "gemini", model, extracted });
+
+    const result = await callBuddyAiDetailed(env, probe);
+    return json({
+      ok: true,
+      colo,
+      provider: result.provider,
+      model: result.model,
+      fallback: result.fallback,
+      extracted: result.text,
+    });
   } catch (err) {
-    return json({ ok: false, error: String(err?.message || err) }, 500);
+    return json({
+      ok: false,
+      colo,
+      error: String(err?.message || err),
+    }, 500);
   }
 }
 
@@ -424,25 +440,125 @@ const GEMINI_REPLY_SCHEMA = {
 };
 
 async function callBuddyAi(env, messages) {
+  const result = await callBuddyAiDetailed(env, messages);
+  return result.text;
+}
+
+async function callBuddyAiDetailed(env, messages) {
   const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
-  if (!googleKey) {
-    const last = messages[messages.length - 1]?.content || "";
-    return JSON.stringify({
-      reply: inventLocalFallback(last),
-      emotion: "curious",
-      animation: "idle",
-      sound: "cute",
-      eyeDirection: "center",
-      speak: true,
-      language: guessLanguage(last),
-    });
+  const geminiModel = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
+  let lastError;
+
+  if (googleKey) {
+    try {
+      const text = await callGemini(env, messages, googleKey);
+      if (text?.trim()) {
+        return { text, provider: "gemini", model: geminiModel, fallback: false };
+      }
+      lastError = new Error("Gemini returned an empty response");
+    } catch (err) {
+      lastError = err;
+      const message = String(err?.message || err);
+      if (!isGeminiLocationError(message)) {
+        throw err;
+      }
+      console.error("Gemini region block; falling back to Workers AI", message);
+    }
   }
 
-  const text = await callGemini(env, messages, googleKey);
-  if (!text?.trim()) {
-    throw new Error("Gemini returned an empty response");
+  if (env.AI) {
+    const workersModel = env.MODEL || "@cf/meta/llama-3.2-3b-instruct";
+    try {
+      const text = await callWorkersAi(env, messages);
+      if (text?.trim()) {
+        return {
+          text,
+          provider: "workers-ai",
+          model: workersModel,
+          fallback: Boolean(googleKey),
+        };
+      }
+      lastError = lastError || new Error("Workers AI returned an empty response");
+    } catch (err) {
+      lastError = err;
+      console.error("Workers AI fallback failed", err);
+    }
   }
-  return text;
+
+  if (!googleKey && !env.AI) {
+    const last = messages[messages.length - 1]?.content || "";
+    return {
+      text: JSON.stringify({
+        reply: inventLocalFallback(last),
+        emotion: "curious",
+        animation: "idle",
+        sound: "cute",
+        eyeDirection: "center",
+        speak: true,
+        language: guessLanguage(last),
+      }),
+      provider: "local",
+      model: "none",
+      fallback: false,
+    };
+  }
+
+  throw lastError || new Error("No AI provider available");
+}
+
+function isGeminiLocationError(message) {
+  const normalized = String(message || "").toLowerCase();
+  return normalized.includes("location is not supported") ||
+    normalized.includes("user location") ||
+    normalized.includes("failed_precondition");
+}
+
+async function callWorkersAi(env, messages) {
+  const models = [
+    env.MODEL || "@cf/meta/llama-3.2-3b-instruct",
+    "@cf/meta/llama-3.2-3b-instruct",
+    "@cf/meta/llama-3.2-1b-instruct",
+  ].filter((model, index, arr) => arr.indexOf(model) === index);
+
+  let lastError;
+  for (const model of models) {
+    try {
+      const result = await env.AI.run(model, { messages, max_tokens: 350 });
+      const text = extractAiText(result);
+      if (text?.trim()) return text;
+
+      const prompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+      const promptResult = await env.AI.run(model, {
+        prompt: `${prompt}\n\nASSISTANT:`,
+        max_tokens: 350,
+      });
+      const promptText = extractAiText(promptResult);
+      if (promptText?.trim()) return promptText;
+      lastError = new Error(`Empty AI response from ${model}`);
+    } catch (err) {
+      lastError = err;
+      console.error(`Workers AI failed for ${model}`, err);
+    }
+  }
+
+  throw lastError || new Error("Workers AI unavailable");
+}
+
+function extractAiText(result) {
+  if (result == null) return "";
+  if (typeof result === "string") return result;
+  if (typeof result.response === "string") return result.response;
+  if (typeof result.result === "string") return result.result;
+  if (typeof result.text === "string") return result.text;
+  if (typeof result.content === "string") return result.content;
+  if (Array.isArray(result.response)) {
+    return result.response.map((part) => part?.content || part || "").join("");
+  }
+  try {
+    return JSON.stringify(result);
+  } catch (_) {
+    return "";
+  }
 }
 
 async function callGemini(env, messages, apiKey) {
