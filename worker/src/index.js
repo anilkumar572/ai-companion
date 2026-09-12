@@ -169,7 +169,7 @@ async function handleDebugAi(env) {
     }];
     const googleKey = env.GOOGLE_AI_API_KEY || env.GEMINI_API_KEY;
     if (googleKey) {
-      const model = env.GOOGLE_AI_MODEL || "gemini-2.5-flash-lite";
+      const model = env.GOOGLE_AI_MODEL || "gemini-3.5-flash-lite";
       const extracted = await callGemini(env, probe, googleKey);
       return json({ ok: true, provider: "gemini", model, extracted });
     }
