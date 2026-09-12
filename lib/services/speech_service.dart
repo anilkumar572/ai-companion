@@ -44,7 +44,6 @@ class SpeechService {
     String? localeId,
     Duration listenFor = const Duration(seconds: 12),
     Duration pauseFor = const Duration(seconds: 2),
-    bool onDevice = true,
   }) async {
     if (!_initialized) {
       throw StateError('Speech recognition is not initialized.');
@@ -57,27 +56,40 @@ class SpeechService {
 
     await shutdown();
 
-    final started = await _speech.listen(
-      onResult: (SpeechRecognitionResult result) {
-        onResult(result.recognizedWords, result.finalResult);
-      },
-      onSoundLevelChange: onSoundLevel,
-      listenOptions: SpeechListenOptions(
-        listenMode: ListenMode.confirmation,
-        partialResults: true,
-        cancelOnError: true,
-        onDevice: onDevice,
-        listenFor: listenFor,
-        pauseFor: pauseFor,
-        localeId: localeId,
-      ),
-    );
+    final resolvedLocale = await _resolveLocaleId(localeId);
+    final attempts = <_ListenAttempt>[
+      _ListenAttempt(localeId: resolvedLocale, onDevice: false),
+      if (resolvedLocale != null) _ListenAttempt(localeId: null, onDevice: false),
+      if (resolvedLocale != null)
+        _ListenAttempt(localeId: resolvedLocale, onDevice: true),
+    ];
 
-    if (!started) {
-      throw StateError('Could not start speech recognition on this device.');
+    for (final attempt in attempts) {
+      final started = await _speech.listen(
+        onResult: (SpeechRecognitionResult result) {
+          onResult(result.recognizedWords, result.finalResult);
+        },
+        onSoundLevelChange: onSoundLevel,
+        listenOptions: SpeechListenOptions(
+          listenMode: ListenMode.dictation,
+          partialResults: true,
+          cancelOnError: false,
+          onDevice: attempt.onDevice,
+          listenFor: listenFor,
+          pauseFor: pauseFor,
+          localeId: attempt.localeId,
+        ),
+      );
+
+      if (started) {
+        _sessionActive = true;
+        return;
+      }
+
+      await _speech.cancel();
     }
 
-    _sessionActive = true;
+    throw StateError('Could not start speech recognition on this device.');
   }
 
   /// Hard stop — releases mic immediately. Call before TTS playback.
@@ -105,8 +117,61 @@ class SpeechService {
     await shutdown();
   }
 
-  String _formatError(SpeechRecognitionError error) {
-    if (error.errorMsg.isNotEmpty) return error.errorMsg;
-    return 'Speech recognition is unavailable right now.';
+  Future<String?> _resolveLocaleId(String? preferred) async {
+    if (preferred == null || preferred.trim().isEmpty) return null;
+
+    final locales = await _speech.locales();
+    if (locales.isEmpty) return null;
+
+    final normalized = _normalizeLocale(preferred);
+    for (final locale in locales) {
+      if (_normalizeLocale(locale.localeId) == normalized) {
+        return locale.localeId;
+      }
+    }
+
+    final language = normalized.split('-').first;
+    for (final locale in locales) {
+      final localeNormalized = _normalizeLocale(locale.localeId);
+      if (localeNormalized == language ||
+          localeNormalized.startsWith('$language-')) {
+        return locale.localeId;
+      }
+    }
+
+    return null;
   }
+
+  String _normalizeLocale(String locale) =>
+      locale.trim().replaceAll('_', '-').toLowerCase();
+
+  String _formatError(SpeechRecognitionError error) {
+    final message = error.errorMsg;
+    if (message.isEmpty) {
+      return 'Speech recognition is unavailable right now.';
+    }
+
+    return switch (message) {
+      'error_network' || 'error_network_timeout' =>
+        'No internet connection for speech recognition.',
+      'error_permission' => 'Microphone permission is required.',
+      'error_language_not_supported' || 'error_language_unavailable' =>
+        'This language is not supported for speech on your device.',
+      'error_speech_timeout' || 'error_no_match' =>
+        'I did not catch that. Tap the orb and try again.',
+      'error_busy' =>
+        'Speech recognition is busy. Tap the orb to try again.',
+      _ => message,
+    };
+  }
+}
+
+class _ListenAttempt {
+  const _ListenAttempt({
+    required this.localeId,
+    required this.onDevice,
+  });
+
+  final String? localeId;
+  final bool onDevice;
 }

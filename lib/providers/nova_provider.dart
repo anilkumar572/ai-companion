@@ -133,6 +133,14 @@ class NovaProvider extends ChangeNotifier {
       return;
     }
 
+    final micGranted = await _requestMicPermission();
+    if (!micGranted) {
+      _setRecoverableError(
+        'Microphone permission is required. Enable it in Settings.',
+      );
+      return;
+    }
+
     await _speech.shutdown();
     errorMessage = null;
     liveTranscript = '';
@@ -196,28 +204,40 @@ class NovaProvider extends ChangeNotifier {
           unawaited(_beginProcessing(transcript.trim()));
         },
         onSoundLevel: _updateAudioLevel,
-        localeId: _speechLocaleId,
+        localeId: preferredLanguage,
         listenFor: const Duration(seconds: 12),
         pauseFor: const Duration(seconds: 2),
-        onDevice: true,
       );
-    } catch (_) {
+    } catch (error) {
       _commandCaptureActive = false;
-      _setRecoverableError('Could not start listening. Tap the orb to try again.');
+      final message = error is StateError && error.message.isNotEmpty
+          ? error.message
+          : 'Could not start listening. Tap the orb to try again.';
+      _setRecoverableError(message);
     }
   }
-
-  String get _speechLocaleId => preferredLanguage.replaceAll('-', '_');
 
   void _handleSpeechError(String message) {
     if (state != NovaAgentState.listening || _processingTranscript) return;
     _commandCaptureActive = false;
     unawaited(_speech.shutdown());
+
+    if (_isBenignSpeechError(message)) {
+      unawaited(_enterIdle());
+      return;
+    }
+
     _setRecoverableError(
       message.isEmpty
           ? 'Speech recognition failed. Tap the orb to try again.'
           : message,
     );
+  }
+
+  bool _isBenignSpeechError(String message) {
+    return message.contains('did not catch that') ||
+        message == 'error_speech_timeout' ||
+        message == 'error_no_match';
   }
 
   void _handleSpeechStatus(String status) {
